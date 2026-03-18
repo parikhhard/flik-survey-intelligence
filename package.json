@@ -1,0 +1,30 @@
+{
+  "name": "flik-survey-intelligence",
+  "version": "1.0.0",
+  "description": "FLIK Survey Intelligence - Production App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "hash-password": "node -e \"const b=require('bcrypt');b.hash(process.argv[1],12).then(h=>console.log(h));\""
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "express-session": "^1.17.3",
+    "bcrypt": "^5.1.1",
+    "snowflake-sdk": "^1.6.22",
+    "node-fetch": "^2.7.0",
+    "dotenv": "^16.3.1",
+    "helmet": "^7.1.0",
+    "express-rate-limit": "^7.1.5",
+    "connect-mongo": "^5.1.0",
+    "morgan": "^1.10.0",
+    "compression": "^1.7.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
