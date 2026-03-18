@@ -21,10 +21,8 @@ const bcrypt      = require('bcrypt');
 const path        = require('path');
 
 // Session store
-let sessionStore;
-if (process.env.USE_MEMORY_SESSIONS === 'true') {
-  sessionStore = undefined;
-} else {
+let sessionStore = undefined;
+if (process.env.USE_MEMORY_SESSIONS !== 'true' && process.env.MONGODB_URI) {
   const MongoStore = require('connect-mongo');
   sessionStore = MongoStore.create({ mongoUrl: process.env.MONGODB_URI });
 }
