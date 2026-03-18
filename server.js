@@ -147,13 +147,13 @@ function getSnowflakeConnection(callback) {
 // Survey data
 app.get('/api/survey-data', requireAuth, function(req, res) {
   const { startDate, endDate, sap } = req.query;
-  const where = ['csat_reason IS NOT NULL'];
+  const where = ['CATEGORY IS NOT NULL', 'SCORE IS NOT NULL', 'IS_SURVEY_COMPLETE = TRUE'];
   const params = [];
-  if (startDate) { where.push('response_date >= ?'); params.push(startDate); }
-  if (endDate)   { where.push('response_date <= ?'); params.push(endDate); }
-  if (sap)       { where.push('unit_sap_number = ?'); params.push(parseInt(sap, 10)); }
+  if (startDate) { where.push('FISCAL_DATE >= ?'); params.push(startDate); }
+  if (endDate)   { where.push('FISCAL_DATE <= ?'); params.push(endDate); }
+  if (sap)       { where.push('UNIT_SAP_NUMBER = ?'); params.push(parseInt(sap, 10)); }
 
-  const sql = 'SELECT survey_platform, survey_name, survey_id, response_id, unit_sap_number, unit, analytics_question_text, csat, csat_reason FROM ' + process.env.SNOWFLAKE_DATABASE + '.' + process.env.SNOWFLAKE_SCHEMA + '.RESPONSES WHERE ' + where.join(' AND ') + ' ORDER BY unit_sap_number';
+  const sql = 'SELECT SURVEY_PLATFORM, SURVEY_NAME, SURVEY_ID, RESPONSE_ID, UNIT_SAP_NUMBER, UNIT_NAME, QUESTION_TEXT, SCORE, CATEGORY FROM FLIK_ANALYTICS.CURIOSITY.SURVEYS_COMBINED WHERE ' + where.join(' AND ') + ' ORDER BY UNIT_SAP_NUMBER';
 
   getSnowflakeConnection(function(err, conn) {
     if (err) return res.status(503).json({ error: 'Database unavailable.' });
@@ -168,16 +168,17 @@ app.get('/api/survey-data', requireAuth, function(req, res) {
         }
         const out = rows.map(function(r) {
           return {
-            survey_platform:         r.SURVEY_PLATFORM         || r.survey_platform         || '',
-            survey_name:             r.SURVEY_NAME             || r.survey_name             || '',
-            survey_id:               r.SURVEY_ID               || r.survey_id               || '',
-            response_id:             r.RESPONSE_ID             || r.response_id             || '',
-            unit_sap_number:         r.UNIT_SAP_NUMBER         || r.unit_sap_number         || 0,
-            unit:                    r.UNIT                    || r.unit                    || '',
-            analytics_question_text: r.ANALYTICS_QUESTION_TEXT || r.analytics_question_text || '',
-            csat:                    parseFloat(r.CSAT         || r.csat)                   || 0,
-            csat_reason:             r.CSAT_REASON             || r.csat_reason             || ''
+            survey_platform:         r.SURVEY_PLATFORM || '',
+            survey_name:             r.SURVEY_NAME     || '',
+            survey_id:               r.SURVEY_ID       || '',
+            response_id:             r.RESPONSE_ID     || '',
+            unit_sap_number:         r.UNIT_SAP_NUMBER || 0,
+            unit:                    r.UNIT_NAME       || '',
+            analytics_question_text: r.QUESTION_TEXT   || '',
+            csat:                    parseFloat(r.SCORE) || 0,
+            csat_reason:             r.CATEGORY        || ''
           };
+        });
         });
         console.log(out.length + ' rows served to ' + req.session.user.username);
         res.json(out);
