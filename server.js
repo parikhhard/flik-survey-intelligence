@@ -260,7 +260,7 @@ app.post('/api/chat', requireAuth, aiLimiter, async function(req, res) {
       'x-api-key':         process.env.ANTHROPIC_API_KEY
     },
     body: JSON.stringify({
-      model:      model || 'claude-sonnet-4-20250514',
+      model:      model || 'claude-haiku-4-5-20251001',
       max_tokens: max_tokens || 4000,
       system:     system,
       messages:   messages

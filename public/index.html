@@ -892,7 +892,7 @@ function callAPI(messages, systemPrompt, onSuccess, onError) {
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4000, system: systemPrompt, messages: messages })
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 4000, system: systemPrompt, messages: messages })
   }).then(function(res) {
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (res.status === 429) { return res.json().then(function(d){ onError(d.error || 'Rate limit reached.'); }); }
