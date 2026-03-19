@@ -181,11 +181,11 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Upload CSV
     </button>
-    <input type="file" id="csv-file" accept=".csv" onchange="handleCSV(this)">
     <button class="hbtn" onclick="clearChat()">
       <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
       New Chat
     </button>
+    <input type="file" id="csv-file" accept=".csv" onchange="handleCSV(this)">
     <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;background:var(--g6);border:1px solid var(--bd2);border-radius:20px;font-size:11px;color:var(--g2);font-weight:600;">
       <span id="user-name">...</span>
       <a href="/logout" style="color:var(--slate);text-decoration:none;font-size:10px;font-weight:400;opacity:0.7;">Sign out</a>
@@ -876,13 +876,23 @@ function callAPI(messages, systemPrompt, onSuccess, onError) {
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4000, system: systemPrompt, messages: messages })
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4000,
+      system: systemPrompt,
+      messages: messages
+    })
   }).then(function(res) {
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (res.status === 429) { return res.json().then(function(d){ onError(d.error || 'Rate limit reached.'); }); }
     if (!res.ok) { return res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); }); }
     return res.json().then(function(data) {
-      onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn', data._fallback || false, data._model || '');
+      onSuccess(
+        data.content && data.content[0] ? data.content[0].text : '',
+        data.stop_reason || 'end_turn',
+        data._fallback || false,
+        data._model || ''
+      );
     });
   }).catch(function(e){ onError(e.message); });
 }
@@ -998,8 +1008,28 @@ function hideModal() {}
 function toggleEye() {}
 function saveKey()  {}
 
+function ask(q) { document.getElementById('user-input').value = q; sendMsg(); }
+function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
+function autoResize(el) { el.style.height=''; el.style.height=Math.min(el.scrollHeight,110)+'px'; }
 
-// Load user name for header
+function clearChat() {
+  chatHistory = [];
+  var m = document.getElementById('messages');
+  m.innerHTML = '<div class="welcome" id="welcome">'
+    + '<div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>'
+    + '<h2>FLIK Survey Intelligence</h2><p>Chat cleared. Ask a new question.</p>'
+    + '<div class="wchips">'
+    + '<button class="wchip" onclick="ask(\'Full executive summary with portfolio health, unit ranking, and top issues\')">Full dashboard</button>'
+    + '<button class="wchip" onclick="ask(\'Show CSAT scores by unit as a bar chart\')">CSAT chart</button>'
+    + '<button class="wchip" onclick="ask(\'Which unit is most at risk?\')">Most at-risk</button>'
+    + '</div></div>';
+}
+
+
+
+
+
+// Load user name from server
 fetch('/api/me').then(function(r){
   if (r.status === 401) { window.location.href = '/login'; return null; }
   return r.json();
@@ -1007,87 +1037,13 @@ fetch('/api/me').then(function(r){
   if (!u) return;
   var el = document.getElementById('user-name');
   if (el) el.textContent = u.name || u.username || 'User';
-});
-
-// Load data from Snowflake
-function loadLiveData() {
-  var nb = document.getElementById('notice-bar');
-  if (nb) { nb.style.display = 'flex'; nb.textContent = 'Loading data from Snowflake...'; }
-  fetch('/api/survey-data')
-    .then(function(r){
-      if (r.status === 401) { window.location.href = '/login'; return null; }
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      return r.json();
-    })
-    .then(function(rows){
-      if (!rows) return;
-      DATA = rows.filter(function(r){ return r.csat_reason; });
-      customData = true;
-      refreshStats();
-      if (nb) nb.style.display = 'none';
-    })
-    .catch(function(err){
-      if (nb) { nb.style.display = 'flex'; nb.textContent = 'Could not load live data (' + err.message + '). Showing demo data.'; }
-      refreshStats();
-    });
-}
-
-// Date filter handlers
-function attachDateFilters() {
-  var s = document.getElementById('filter-start');
-  var e = document.getElementById('filter-end');
-  if (!s) return;
-  function reload() {
-    var url = '/api/survey-data';
-    var params = [];
-    if (s.value) params.push('startDate=' + s.value);
-    if (e && e.value) params.push('endDate=' + e.value);
-    if (params.length) url += '?' + params.join('&');
-    var nb = document.getElementById('notice-bar');
-    if (nb) { nb.style.display='flex'; nb.textContent='Refreshing data...'; }
-    fetch(url).then(function(r){ return r.json(); }).then(function(rows){
-      DATA = rows.filter(function(r){ return r.csat_reason; });
-      customData = true;
-      refreshStats();
-      if (nb) nb.style.display = 'none';
-      addBotMsg('Data refreshed: ' + DATA.length.toLocaleString() + ' rows loaded.');
-    }).catch(function(err){ addBotMsg('Reload failed: ' + err.message); });
-  }
-  s.addEventListener('change', reload);
-  if (e) e.addEventListener('change', reload);
-}
+}).catch(function(){});
 
 refreshStats();
-loadLiveData();
-attachDateFilters();
 
-function ask(q) {
-  document.getElementById('user-input').value = q;
-  sendMsg();
-}
-
-function handleKey(e) {
-  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
-}
-
-function autoResize(el) {
-  el.style.height = '';
-  el.style.height = Math.min(el.scrollHeight, 110) + 'px';
-}
-
-function clearChat() {
-  chatHistory = [];
-  var m = document.getElementById('messages');
-  m.innerHTML = '<div class="welcome" id="welcome">'
-    + '<div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>'
-    + '<h2>FLIK Survey Intelligence</h2>'
-    + '<p>Chat cleared. Ask a new question.</p>'
-    + '<div class="wchips">'
-    + '<button class="wchip" onclick="ask(\'Give me a full executive summary with portfolio health, unit ranking, and top issues\')">Full dashboard</button>'
-    + '<button class="wchip" onclick="ask(\'Show CSAT scores by unit as a bar chart\')">CSAT chart</button>'
-    + '<button class="wchip" onclick="ask(\'Which unit is most at risk?\')" >Most at-risk</button>'
-    + '</div></div>';
-}
+// Show upload notice
+var nb = document.getElementById('notice-bar');
+if (nb) { nb.style.display = 'flex'; nb.textContent = 'Upload a CSV file to load survey data, or data will load from Snowflake if connected.'; }
 
 </script>
 </body>
