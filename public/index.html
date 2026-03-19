@@ -153,23 +153,6 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
 </head>
 <body>
 
-<div class="modal-ov" id="key-modal">
-  <div class="modal-box">
-    <div class="mlogo">
-      <div class="mlmark"><svg viewBox="0 0 24 24"><path d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-4.5-6.72-5.5-7.52-5.5-4.5 0-7.51 3.03-7.51 5.5v5h15.03v-5z"/></svg></div>
-      <div><span class="mlname">FLIK</span><span class="mlsub">Survey Intelligence</span></div>
-    </div>
-    <h2>Connect Your AI</h2>
-    <p class="mdesc">Enter your Anthropic API key. Stored in memory only for this session.<br><br>Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
-    <div class="kw">
-      <input type="password" id="api-key-input" placeholder="sk-ant-api03-..." autocomplete="off">
-      <button class="eye-btn" onclick="toggleEye()"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
-    </div>
-    <button class="msave" onclick="saveKey()">Save &amp; Connect</button>
-    <p class="mnote">Key is cleared when you close this tab.</p>
-  </div>
-</div>
-
 <header>
   <div class="logo">
     <div class="lmark"><svg viewBox="0 0 24 24"><path d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-4.5-6.72-5.5-7.52-5.5-4.5 0-7.51 3.03-7.51 5.5v5h15.03v-5z"/></svg></div>
@@ -177,7 +160,7 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
   </div>
   <div class="hact">
     <div class="badge"><div class="pdot"></div>AI Analyst</div>
-    <button class="hbtn" onclick="document.querySelectorAll('input').length.click()">
+    <button class="hbtn" onclick="document.getElementById('csv-file').click()">
       <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
       Upload CSV
     </button>
@@ -876,23 +859,13 @@ function callAPI(messages, systemPrompt, onSuccess, onError) {
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 4000,
-      system: systemPrompt,
-      messages: messages
-    })
+    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 4000, system: systemPrompt, messages: messages })
   }).then(function(res) {
     if (res.status === 401) { window.location.href = '/login'; return; }
     if (res.status === 429) { return res.json().then(function(d){ onError(d.error || 'Rate limit reached.'); }); }
     if (!res.ok) { return res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); }); }
     return res.json().then(function(data) {
-      onSuccess(
-        data.content && data.content[0] ? data.content[0].text : '',
-        data.stop_reason || 'end_turn',
-        data._fallback || false,
-        data._model || ''
-      );
+      onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn', data._fallback || false, data._model || '');
     });
   }).catch(function(e){ onError(e.message); });
 }
@@ -1029,7 +1002,6 @@ function clearChat() {
 
 
 
-// Load user name from server
 fetch('/api/me').then(function(r){
   if (r.status === 401) { window.location.href = '/login'; return null; }
   return r.json();
@@ -1041,9 +1013,8 @@ fetch('/api/me').then(function(r){
 
 refreshStats();
 
-// Show upload notice
 var nb = document.getElementById('notice-bar');
-if (nb) { nb.style.display = 'flex'; nb.textContent = 'Upload a CSV file to load survey data, or data will load from Snowflake if connected.'; }
+if (nb) { nb.style.display = 'flex'; nb.textContent = 'Upload a CSV file to load your survey data.'; }
 
 </script>
 </body>
