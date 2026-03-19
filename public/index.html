@@ -765,18 +765,33 @@ function buildSystem(userQuery) {
 
   var tu = findUnit(userQuery, a.unitStats);
 
-  // Full unit directory: SAP -> Name mapping (always included so AI can answer name lookups)
-  var unitDir = a.unitStats.map(function(u) {
+  // Cap units sent to AI to prevent token overflow with large datasets
+  // Always include the focus unit if one was identified
+  var MAX_UNITS = 120;
+  var statSlice = a.unitStats.slice(0, MAX_UNITS);
+  // If focus unit isn't in slice, add it
+  if (tu) {
+    var tuInSlice = false;
+    for (var si = 0; si < statSlice.length; si++) {
+      if (statSlice[si].key === tu.key) { tuInSlice = true; break; }
+    }
+    if (!tuInSlice) { statSlice = [tu].concat(statSlice.slice(0, MAX_UNITS - 1)); }
+  }
+  var totalUnits = a.uniqueUnits;
+  var slicedNote = totalUnits > MAX_UNITS ? ' (showing top ' + MAX_UNITS + ' of ' + totalUnits + ' by weighted score)' : '';
+
+  // Unit directory: SAP -> Name
+  var unitDir = statSlice.map(function(u) {
     return 'SAP ' + (u.sap || '?') + ' = ' + u.name;
   }).join('\n');
 
-  // Full unit data lines with display name always shown
-  var unitLines = a.unitStats.map(function(u) {
+  // Unit data lines
+  var unitLines = statSlice.map(function(u) {
     var displayName = u.name && u.name !== String(u.sap) ? u.name : ('SAP-' + u.sap);
     return displayName + '|SAP:' + (u.sap||'?') + '|n:' + u.responses + '|raw:' + u.rawAvg + '|wtd:' + u.wScore
       + '|neg:' + u.negRate + '%|pos:' + u.posRate + '%|nps:' + u.nps
-      + '|conf:' + u.conf.label + u.conf.note
-      + '|issues:' + u.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(',');
+      + '|conf:' + u.conf.label
+      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0]+'('+x[1]+')';}).join(',');
   }).join('\n');
 
   var unitFocus = '';
@@ -791,11 +806,11 @@ function buildSystem(userQuery) {
 
   var rendered = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
     .concat(pendingTables.map(function(t,i){return 'Table '+(i+1)+': '+t.title;})).join('\n') || '(none)';
-  var topIssues = a.topReasons.slice(0,12).map(function(x){return x[0]+':'+x[1];}).join(', ');
-  var worstQ = a.qStats.slice(0,6).map(function(x){return '"'+x.q.slice(0,45)+'"(wtd:'+x.wAvg+',n:'+x.n+')';}).join('; ');
+  var topIssues = a.topReasons.slice(0,8).map(function(x){return x[0]+':'+x[1];}).join(', ');
+  var worstQ = a.qStats.slice(0,4).map(function(x){return '"'+x.q.slice(0,40)+'"(wtd:'+x.wAvg+',n:'+x.n+')';}).join('; ');
 
   return 'You are a senior hospitality analyst at FLIK Hospitality Group. Be rigorous, data-driven, and honest about data limitations.\n\n'
-    + 'UNIT DIRECTORY (SAP -> Display Name) - USE THIS to answer any "what is unit X called" questions:\n'
+    + 'UNIT DIRECTORY (SAP -> Display Name)' + slicedNote + ':\n'
     + unitDir + '\n\n'
     + 'PORTFOLIO SNAPSHOT:\n'
     + '- Total rows: ' + a.totalRows.toLocaleString() + ' | Unique responses: ' + a.uniqueResponses.toLocaleString() + ' | Units: ' + a.uniqueUnits + '\n'
@@ -804,7 +819,7 @@ function buildSystem(userQuery) {
     + '- Scoring: Bayesian-weighted (C=' + CONF_C + '). CSAT 1-5: <3=at-risk, 3-3.9=neutral, 4+=positive\n'
     + unitFocus
     + '\nALL UNIT DATA (pipe-delimited):\n' + unitLines
-    + '\n\nTOP ISSUES: ' + topIssues
+    + '\n\nTOP ISSUES PORTFOLIO-WIDE: ' + topIssues
     + '\nWORST QUESTION TYPES: ' + worstQ
     + '\n\nVISUALS ALREADY SHOWN TO USER:\n' + rendered
     + '\n\nOUTPUT RULES:\n'
@@ -814,7 +829,7 @@ function buildSystem(userQuery) {
     + '4. End with a ### Key Takeaway section (3-5 sentences).\n'
     + '\nANALYST RULES:\n'
     + '- UNIT NAMES: Always use the display name from the UNIT DIRECTORY. Never refer to a unit by SAP number alone.\n'
-    + '- LOOKUPS: If asked "what is unit X" or "what is the name of SAP Y" - answer directly from the UNIT DIRECTORY above.\n'
+    + '- LOOKUPS: If asked "what is unit X" or "what is the name of SAP Y" - answer directly from the UNIT DIRECTORY.\n'
     + '- Cite n= for every claim. For units with n<' + MIN_RANK + ', say "insufficient data".\n'
     + '- Use weighted scores for rankings. Flag when raw vs weighted diverge.\n'
     + '- For at-risk units: name top 2-3 issues with concrete operational fixes.\n'
