@@ -764,76 +764,94 @@ function buildSystem(userQuery) {
   buildVisuals(userQuery, a);
 
   var tu = findUnit(userQuery, a.unitStats);
-
-  // Cap units sent to AI to prevent token overflow with large datasets
-  // Always include the focus unit if one was identified
-  var MAX_UNITS = 120;
-  var statSlice = a.unitStats.slice(0, MAX_UNITS);
-  // If focus unit isn't in slice, add it
-  if (tu) {
-    var tuInSlice = false;
-    for (var si = 0; si < statSlice.length; si++) {
-      if (statSlice[si].key === tu.key) { tuInSlice = true; break; }
-    }
-    if (!tuInSlice) { statSlice = [tu].concat(statSlice.slice(0, MAX_UNITS - 1)); }
-  }
   var totalUnits = a.uniqueUnits;
-  var slicedNote = totalUnits > MAX_UNITS ? ' (showing top ' + MAX_UNITS + ' of ' + totalUnits + ' by weighted score)' : '';
 
-  // Unit directory: SAP -> Name
-  var unitDir = statSlice.map(function(u) {
-    return 'SAP ' + (u.sap || '?') + ' = ' + u.name;
+  // Smart prompt strategy:
+  // - Full detail for focus unit + top 5 + bottom 5
+  // - Summary line only for next 20
+  // - Full directory (SAP->Name) for all units but compact
+  // This keeps prompt under 3000 tokens so Groq never fails
+
+  // Always include: focus unit, top 5, bottom 5, middle sample
+  var highlighted = [];
+  var highlightKeys = {};
+
+  // Add focus unit first
+  if (tu) {
+    highlighted.push(tu);
+    highlightKeys[tu.key] = 1;
+  }
+  // Add top 5
+  for (var i = 0; i < Math.min(5, a.unitStats.length); i++) {
+    var u = a.unitStats[i];
+    if (!highlightKeys[u.key]) { highlighted.push(u); highlightKeys[u.key] = 1; }
+  }
+  // Add bottom 5
+  for (var j = Math.max(0, a.unitStats.length - 5); j < a.unitStats.length; j++) {
+    var u2 = a.unitStats[j];
+    if (!highlightKeys[u2.key]) { highlighted.push(u2); highlightKeys[u2.key] = 1; }
+  }
+
+  // Summary stats for remaining units (compact - just name, SAP, score, n)
+  var summaryUnits = [];
+  for (var k = 0; k < Math.min(20, a.unitStats.length); k++) {
+    var us = a.unitStats[k];
+    if (!highlightKeys[us.key]) { summaryUnits.push(us); }
+  }
+
+  // Compact SAP->Name directory (top 50 by score to keep prompt small)
+  var dirUnits = a.unitStats.slice(0, 50);
+  var unitDir = dirUnits.map(function(u) {
+    var nm = u.name.length > 30 ? u.name.slice(0, 28) + '..' : u.name;
+    return 'SAP ' + (u.sap || '?') + '=' + nm;
+  }).join(' | ');
+
+  // Full detail lines for highlighted units
+  var detailLines = highlighted.map(function(u) {
+    var nm = u.name.length > 40 ? u.name.slice(0, 38) + '..' : u.name;
+    return nm + '|SAP:' + (u.sap||'?') + '|n:' + u.responses
+      + '|wtd:' + u.wScore + '|raw:' + u.rawAvg
+      + '|neg:' + u.negRate + '%|nps:' + u.nps
+      + '|conf:' + u.conf.label
+      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,20)+'('+x[1]+')';}).join(',');
   }).join('\n');
 
-  // Unit data lines
-  var unitLines = statSlice.map(function(u) {
-    var displayName = u.name && u.name !== String(u.sap) ? u.name : ('SAP-' + u.sap);
-    return displayName + '|SAP:' + (u.sap||'?') + '|n:' + u.responses + '|raw:' + u.rawAvg + '|wtd:' + u.wScore
-      + '|neg:' + u.negRate + '%|pos:' + u.posRate + '%|nps:' + u.nps
-      + '|conf:' + u.conf.label
-      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0]+'('+x[1]+')';}).join(',');
+  // Summary lines for other top units
+  var summaryLines = summaryUnits.map(function(u) {
+    var nm = u.name.length > 35 ? u.name.slice(0, 33) + '..' : u.name;
+    return nm + '|SAP:' + (u.sap||'?') + '|wtd:' + u.wScore + '|n:' + u.responses + '|conf:' + u.conf.label;
   }).join('\n');
 
   var unitFocus = '';
   if (tu) {
-    var tuName = tu.name && tu.name !== String(tu.sap) ? tu.name : ('SAP-' + tu.sap);
+    var tuName = tu.name.length > 50 ? tu.name.slice(0, 48) + '..' : tu.name;
     unitFocus = '\nFOCUS UNIT: ' + tuName + ' (SAP ' + tu.sap + ')'
-      + ' | raw ' + tu.rawAvg + ' | wtd ' + tu.wScore + '/5'
-      + ' | n=' + tu.responses + ' | conf: ' + tu.conf.label + tu.conf.note
-      + ' | neg ' + tu.negRate + '% | top issues: '
-      + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(', ') + '\n';
+      + ' | wtd ' + tu.wScore + '/5 | raw ' + tu.rawAvg
+      + ' | n=' + tu.responses + ' | ' + tu.conf.label + ' confidence'
+      + ' | neg ' + tu.negRate + '% | issues: '
+      + tu.topReasons.slice(0,5).map(function(x){return x[0].slice(0,25)+'('+x[1]+')';}).join(', ') + '\n';
   }
 
   var rendered = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
     .concat(pendingTables.map(function(t,i){return 'Table '+(i+1)+': '+t.title;})).join('\n') || '(none)';
-  var topIssues = a.topReasons.slice(0,8).map(function(x){return x[0]+':'+x[1];}).join(', ');
-  var worstQ = a.qStats.slice(0,4).map(function(x){return '"'+x.q.slice(0,40)+'"(wtd:'+x.wAvg+',n:'+x.n+')';}).join('; ');
+  var topIssues = a.topReasons.slice(0,6).map(function(x){return x[0].slice(0,25)+':'+x[1];}).join(', ');
 
-  return 'You are a senior hospitality analyst at FLIK Hospitality Group. Be rigorous, data-driven, and honest about data limitations.\n\n'
-    + 'UNIT DIRECTORY (SAP -> Display Name)' + slicedNote + ':\n'
-    + unitDir + '\n\n'
-    + 'PORTFOLIO SNAPSHOT:\n'
-    + '- Total rows: ' + a.totalRows.toLocaleString() + ' | Unique responses: ' + a.uniqueResponses.toLocaleString() + ' | Units: ' + a.uniqueUnits + '\n'
-    + '- Rankable (n>=' + MIN_RANK + '): ' + a.rankable + ' | Reliable (n>=' + MIN_RELIABLE + '): ' + a.reliable + '\n'
-    + '- Portfolio weighted mean CSAT: ' + a.gMean + '/5\n'
-    + '- Scoring: Bayesian-weighted (C=' + CONF_C + '). CSAT 1-5: <3=at-risk, 3-3.9=neutral, 4+=positive\n'
+  return 'You are a senior FLIK Hospitality analyst. Be rigorous and data-driven.\n\n'
+    + 'PORTFOLIO: ' + totalUnits + ' units | ' + a.uniqueResponses.toLocaleString() + ' responses | mean CSAT ' + a.gMean + '/5 | rankable: ' + a.rankable + '\n'
+    + 'Scoring: Bayesian-weighted (C=' + CONF_C + '). <3=at-risk, 3-3.9=neutral, 4+=positive\n'
     + unitFocus
-    + '\nALL UNIT DATA (pipe-delimited):\n' + unitLines
-    + '\n\nTOP ISSUES PORTFOLIO-WIDE: ' + topIssues
-    + '\nWORST QUESTION TYPES: ' + worstQ
-    + '\n\nVISUALS ALREADY SHOWN TO USER:\n' + rendered
-    + '\n\nOUTPUT RULES:\n'
-    + '1. Write ONLY plain markdown text. No HTML tags. No code fences. No JSON.\n'
-    + '2. Do NOT reproduce table data - charts and tables are already displayed.\n'
-    + '3. Complete your full response. Never stop mid-sentence.\n'
-    + '4. End with a ### Key Takeaway section (3-5 sentences).\n'
-    + '\nANALYST RULES:\n'
-    + '- UNIT NAMES: Always use the display name from the UNIT DIRECTORY. Never refer to a unit by SAP number alone.\n'
-    + '- LOOKUPS: If asked "what is unit X" or "what is the name of SAP Y" - answer directly from the UNIT DIRECTORY.\n'
-    + '- Cite n= for every claim. For units with n<' + MIN_RANK + ', say "insufficient data".\n'
-    + '- Use weighted scores for rankings. Flag when raw vs weighted diverge.\n'
-    + '- For at-risk units: name top 2-3 issues with concrete operational fixes.\n'
-    + '- Tone: senior analyst briefing VP of Operations. Specific, tight, no filler.';
+    + '\nUNIT DIRECTORY (SAP=Name, all ' + totalUnits + ' units):\n' + unitDir + '\n'
+    + '\nDETAILED DATA (focus + top5 + bottom5):\n' + detailLines
+    + (summaryLines ? '\n\nOTHER TOP UNITS (summary):\n' + summaryLines : '')
+    + '\n\nTOP PORTFOLIO ISSUES: ' + topIssues
+    + '\nVISUALS SHOWN: ' + rendered
+    + '\n\nRULES:\n'
+    + '1. Plain markdown only. No HTML, no code fences.\n'
+    + '2. Do not reproduce table data already shown in visuals.\n'
+    + '3. Always use unit display names not SAP numbers.\n'
+    + '4. Cite n= for every claim. Flag low confidence data.\n'
+    + '5. End with ### Key Takeaway (3-5 sentences).\n'
+    + '6. Complete every sentence. Never stop mid-response.';
 }
 
 function sanitizeReply(raw) {
