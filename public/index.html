@@ -1061,6 +1061,34 @@ refreshStats();
 loadLiveData();
 attachDateFilters();
 
+function ask(q) {
+  document.getElementById('user-input').value = q;
+  sendMsg();
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); }
+}
+
+function autoResize(el) {
+  el.style.height = '';
+  el.style.height = Math.min(el.scrollHeight, 110) + 'px';
+}
+
+function clearChat() {
+  chatHistory = [];
+  var m = document.getElementById('messages');
+  m.innerHTML = '<div class="welcome" id="welcome">'
+    + '<div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>'
+    + '<h2>FLIK Survey Intelligence</h2>'
+    + '<p>Chat cleared. Ask a new question.</p>'
+    + '<div class="wchips">'
+    + '<button class="wchip" onclick="ask(\'Give me a full executive summary with portfolio health, unit ranking, and top issues\')">Full dashboard</button>'
+    + '<button class="wchip" onclick="ask(\'Show CSAT scores by unit as a bar chart\')">CSAT chart</button>'
+    + '<button class="wchip" onclick="ask(\'Which unit is most at risk?\')" >Most at-risk</button>'
+    + '</div></div>';
+}
+
 </script>
 </body>
 </html>
