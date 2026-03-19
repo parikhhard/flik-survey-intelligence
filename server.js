@@ -23,16 +23,7 @@ if (process.env.USE_MEMORY_SESSIONS !== 'true' && process.env.MONGODB_URI) {
 const app = express();
 
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc:  ["'self'", "'unsafe-inline'", "cdnjs.cloudflare.com", "fonts.googleapis.com"],
-      styleSrc:   ["'self'", "'unsafe-inline'", "fonts.googleapis.com", "fonts.gstatic.com"],
-      fontSrc:    ["'self'", "fonts.gstatic.com"],
-      imgSrc:     ["'self'", "data:"],
-      connectSrc: ["'self'"]
-    }
-  }
+  contentSecurityPolicy: false
 }));
 
 app.use(compression());
