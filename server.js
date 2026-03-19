@@ -31,6 +31,7 @@ app.use(morgan('combined'));
 app.use(express.json({ limit: '2mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+
 app.use(session({
   secret:            process.env.SESSION_SECRET || 'fallback-secret-change-me',
   resave:            false,
@@ -240,7 +241,7 @@ var aiLimiter = rateLimit({
   }
 });
 
-app.post('/api/chat', requireAuth, aiLimiter, function(req, res) {
+app.post('/api/chat', requireAuth, aiLimiter, async function(req, res) {
   var model      = req.body.model;
   var max_tokens = req.body.max_tokens;
   var system     = req.body.system;
@@ -266,14 +267,21 @@ app.post('/api/chat', requireAuth, aiLimiter, function(req, res) {
     })
   })
   .then(function(aRes) {
+
     if (aRes.status === 429 || aRes.status === 529 || aRes.status === 503) {
+      console.warn('Anthropic rate limited (' + aRes.status + ') — trying Groq');
       throw new Error('RATE_LIMITED');
     }
     if (!aRes.ok) {
-      return aRes.text().then(function(t) {
-        throw new Error('ANTHROPIC_ERROR:' + aRes.status + ':' + t.slice(0, 100));
+      return aRes.text().then(function(errText) {
+        console.error('Anthropic error:', aRes.status, errText.slice(0, 200));
+        if (errText.indexOf('credit') !== -1 || errText.indexOf('billing') !== -1 || aRes.status === 400) {
+          throw new Error('RATE_LIMITED');
+        }
+        throw new Error('ANTHROPIC_ERROR:' + aRes.status + ':' + errText.slice(0, 100));
       });
     }
+    
     return aRes.json().then(function(data) {
       data._provider = 'anthropic';
       res.json(data);
