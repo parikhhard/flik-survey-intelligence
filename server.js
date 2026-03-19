@@ -340,6 +340,27 @@ app.get('/', requireAuth, function(req, res) {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+app.get('/test-groq', requireAuth, function(req, res) {
+  fetch('https://api.groq.com/openai/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + process.env.GROQ_API_KEY
+    },
+    body: JSON.stringify({
+      model: 'llama-3.3-70b-versatile',
+      max_tokens: 50,
+      messages: [{ role: 'user', content: 'Say hello.' }]
+    })
+  }).then(function(r) {
+    return r.text().then(function(t) {
+      res.type('text').send('Status: ' + r.status + '\nBody: ' + t);
+    });
+  }).catch(function(e) {
+    res.type('text').send('Network error: ' + e.message);
+  });
+});
+
 // Health check
 app.get('/health', function(req, res) {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
