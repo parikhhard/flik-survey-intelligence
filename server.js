@@ -365,9 +365,16 @@ app.post('/api/chat', requireAuth, function (req, res) {
     return res.status(400).json({ error: 'messages array required.' });
   }
 
-  let conversation = (system || '') + '\n\n';
-  messages.slice(-8).forEach(function (m) {
-    conversation += m.role.toUpperCase() + ': ' + m.content + '\n\n';
+  // Keep prompt small so Cortex responds well within Railway's timeout.
+  // Truncate system prompt to 6000 chars max, keep last 3 messages only.
+  const systemTrunc = (system || '').slice(0, 6000);
+  const recentMsgs  = messages.slice(-3);
+
+  let conversation = systemTrunc + '\n\n';
+  recentMsgs.forEach(function (m) {
+    // Truncate each message to 1000 chars to avoid huge re-sends
+    const content = (m.content || '').slice(0, 1000);
+    conversation += m.role.toUpperCase() + ': ' + content + '\n\n';
   });
   conversation += 'ASSISTANT:';
 
@@ -397,11 +404,7 @@ app.get('/', requireAuth, function (req, res) {
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', function (req, res) {
-  res.json({
-    status:    'ok',
-    snowflake: sfConn && sfConn.isUp() ? 'connected' : 'disconnected',
-    timestamp: new Date().toISOString()
-  });
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 app.use(function (req, res) {
