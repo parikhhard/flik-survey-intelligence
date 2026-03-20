@@ -241,7 +241,7 @@ var PAL = ['#2D6A4F','#40916C','#52B788','#E9C46A','#E76F51','#60A5FA','#95D5B2'
 
 var DATA = [];
 var chatHistory = [];
-// API key handled server-side
+// AI handled via Snowflake Cortex server-side
 var customData = false;
 var chartCounter = 0;
 var chartReg = {};
@@ -764,94 +764,61 @@ function buildSystem(userQuery) {
   buildVisuals(userQuery, a);
 
   var tu = findUnit(userQuery, a.unitStats);
-  var totalUnits = a.uniqueUnits;
 
-  // Smart prompt strategy:
-  // - Full detail for focus unit + top 5 + bottom 5
-  // - Summary line only for next 20
-  // - Full directory (SAP->Name) for all units but compact
-  // This keeps prompt under 3000 tokens so Groq never fails
-
-  // Always include: focus unit, top 5, bottom 5, middle sample
-  var highlighted = [];
-  var highlightKeys = {};
-
-  // Add focus unit first
-  if (tu) {
-    highlighted.push(tu);
-    highlightKeys[tu.key] = 1;
-  }
-  // Add top 5
-  for (var i = 0; i < Math.min(5, a.unitStats.length); i++) {
-    var u = a.unitStats[i];
-    if (!highlightKeys[u.key]) { highlighted.push(u); highlightKeys[u.key] = 1; }
-  }
-  // Add bottom 5
-  for (var j = Math.max(0, a.unitStats.length - 5); j < a.unitStats.length; j++) {
-    var u2 = a.unitStats[j];
-    if (!highlightKeys[u2.key]) { highlighted.push(u2); highlightKeys[u2.key] = 1; }
-  }
-
-  // Summary stats for remaining units (compact - just name, SAP, score, n)
-  var summaryUnits = [];
-  for (var k = 0; k < Math.min(20, a.unitStats.length); k++) {
-    var us = a.unitStats[k];
-    if (!highlightKeys[us.key]) { summaryUnits.push(us); }
-  }
-
-  // Compact SAP->Name directory (top 50 by score to keep prompt small)
-  var dirUnits = a.unitStats.slice(0, 50);
-  var unitDir = dirUnits.map(function(u) {
-    var nm = u.name.length > 30 ? u.name.slice(0, 28) + '..' : u.name;
-    return 'SAP ' + (u.sap || '?') + '=' + nm;
-  }).join(' | ');
-
-  // Full detail lines for highlighted units
-  var detailLines = highlighted.map(function(u) {
-    var nm = u.name.length > 40 ? u.name.slice(0, 38) + '..' : u.name;
-    return nm + '|SAP:' + (u.sap||'?') + '|n:' + u.responses
-      + '|wtd:' + u.wScore + '|raw:' + u.rawAvg
-      + '|neg:' + u.negRate + '%|nps:' + u.nps
-      + '|conf:' + u.conf.label
-      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,20)+'('+x[1]+')';}).join(',');
+  // Full unit directory: SAP -> Name mapping (always included so AI can answer name lookups)
+  var unitDir = a.unitStats.map(function(u) {
+    return 'SAP ' + (u.sap || '?') + ' = ' + u.name;
   }).join('\n');
 
-  // Summary lines for other top units
-  var summaryLines = summaryUnits.map(function(u) {
-    var nm = u.name.length > 35 ? u.name.slice(0, 33) + '..' : u.name;
-    return nm + '|SAP:' + (u.sap||'?') + '|wtd:' + u.wScore + '|n:' + u.responses + '|conf:' + u.conf.label;
+  // Full unit data lines with display name always shown
+  var unitLines = a.unitStats.map(function(u) {
+    var displayName = u.name && u.name !== String(u.sap) ? u.name : ('SAP-' + u.sap);
+    return displayName + '|SAP:' + (u.sap||'?') + '|n:' + u.responses + '|raw:' + u.rawAvg + '|wtd:' + u.wScore
+      + '|neg:' + u.negRate + '%|pos:' + u.posRate + '%|nps:' + u.nps
+      + '|conf:' + u.conf.label + u.conf.note
+      + '|issues:' + u.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(',');
   }).join('\n');
 
   var unitFocus = '';
   if (tu) {
-    var tuName = tu.name.length > 50 ? tu.name.slice(0, 48) + '..' : tu.name;
+    var tuName = tu.name && tu.name !== String(tu.sap) ? tu.name : ('SAP-' + tu.sap);
     unitFocus = '\nFOCUS UNIT: ' + tuName + ' (SAP ' + tu.sap + ')'
-      + ' | wtd ' + tu.wScore + '/5 | raw ' + tu.rawAvg
-      + ' | n=' + tu.responses + ' | ' + tu.conf.label + ' confidence'
-      + ' | neg ' + tu.negRate + '% | issues: '
-      + tu.topReasons.slice(0,5).map(function(x){return x[0].slice(0,25)+'('+x[1]+')';}).join(', ') + '\n';
+      + ' | raw ' + tu.rawAvg + ' | wtd ' + tu.wScore + '/5'
+      + ' | n=' + tu.responses + ' | conf: ' + tu.conf.label + tu.conf.note
+      + ' | neg ' + tu.negRate + '% | top issues: '
+      + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(', ') + '\n';
   }
 
   var rendered = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
     .concat(pendingTables.map(function(t,i){return 'Table '+(i+1)+': '+t.title;})).join('\n') || '(none)';
-  var topIssues = a.topReasons.slice(0,6).map(function(x){return x[0].slice(0,25)+':'+x[1];}).join(', ');
+  var topIssues = a.topReasons.slice(0,12).map(function(x){return x[0]+':'+x[1];}).join(', ');
+  var worstQ = a.qStats.slice(0,6).map(function(x){return '"'+x.q.slice(0,45)+'"(wtd:'+x.wAvg+',n:'+x.n+')';}).join('; ');
 
-  return 'You are a senior FLIK Hospitality analyst. Be rigorous and data-driven.\n\n'
-    + 'PORTFOLIO: ' + totalUnits + ' units | ' + a.uniqueResponses.toLocaleString() + ' responses | mean CSAT ' + a.gMean + '/5 | rankable: ' + a.rankable + '\n'
-    + 'Scoring: Bayesian-weighted (C=' + CONF_C + '). <3=at-risk, 3-3.9=neutral, 4+=positive\n'
+  return 'You are a senior hospitality analyst at FLIK Hospitality Group. Be rigorous, data-driven, and honest about data limitations.\n\n'
+    + 'UNIT DIRECTORY (SAP -> Display Name) - USE THIS to answer any "what is unit X called" questions:\n'
+    + unitDir + '\n\n'
+    + 'PORTFOLIO SNAPSHOT:\n'
+    + '- Total rows: ' + a.totalRows.toLocaleString() + ' | Unique responses: ' + a.uniqueResponses.toLocaleString() + ' | Units: ' + a.uniqueUnits + '\n'
+    + '- Rankable (n>=' + MIN_RANK + '): ' + a.rankable + ' | Reliable (n>=' + MIN_RELIABLE + '): ' + a.reliable + '\n'
+    + '- Portfolio weighted mean CSAT: ' + a.gMean + '/5\n'
+    + '- Scoring: Bayesian-weighted (C=' + CONF_C + '). CSAT 1-5: <3=at-risk, 3-3.9=neutral, 4+=positive\n'
     + unitFocus
-    + '\nUNIT DIRECTORY (SAP=Name, all ' + totalUnits + ' units):\n' + unitDir + '\n'
-    + '\nDETAILED DATA (focus + top5 + bottom5):\n' + detailLines
-    + (summaryLines ? '\n\nOTHER TOP UNITS (summary):\n' + summaryLines : '')
-    + '\n\nTOP PORTFOLIO ISSUES: ' + topIssues
-    + '\nVISUALS SHOWN: ' + rendered
-    + '\n\nRULES:\n'
-    + '1. Plain markdown only. No HTML, no code fences.\n'
-    + '2. Do not reproduce table data already shown in visuals.\n'
-    + '3. Always use unit display names not SAP numbers.\n'
-    + '4. Cite n= for every claim. Flag low confidence data.\n'
-    + '5. End with ### Key Takeaway (3-5 sentences).\n'
-    + '6. Complete every sentence. Never stop mid-response.';
+    + '\nALL UNIT DATA (pipe-delimited):\n' + unitLines
+    + '\n\nTOP ISSUES: ' + topIssues
+    + '\nWORST QUESTION TYPES: ' + worstQ
+    + '\n\nVISUALS ALREADY SHOWN TO USER:\n' + rendered
+    + '\n\nOUTPUT RULES:\n'
+    + '1. Write ONLY plain markdown text. No HTML tags. No code fences. No JSON.\n'
+    + '2. Do NOT reproduce table data - charts and tables are already displayed.\n'
+    + '3. Complete your full response. Never stop mid-sentence.\n'
+    + '4. End with a ### Key Takeaway section (3-5 sentences).\n'
+    + '\nANALYST RULES:\n'
+    + '- UNIT NAMES: Always use the display name from the UNIT DIRECTORY. Never refer to a unit by SAP number alone.\n'
+    + '- LOOKUPS: If asked "what is unit X" or "what is the name of SAP Y" - answer directly from the UNIT DIRECTORY above.\n'
+    + '- Cite n= for every claim. For units with n<' + MIN_RANK + ', say "insufficient data".\n'
+    + '- Use weighted scores for rankings. Flag when raw vs weighted diverge.\n'
+    + '- For at-risk units: name top 2-3 issues with concrete operational fixes.\n'
+    + '- Tone: senior analyst briefing VP of Operations. Specific, tight, no filler.';
 }
 
 function sanitizeReply(raw) {
@@ -892,13 +859,12 @@ function callAPI(messages, systemPrompt, onSuccess, onError) {
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: 4000, system: systemPrompt, messages: messages })
+    body: JSON.stringify({ system: systemPrompt, messages: messages })
   }).then(function(res) {
     if (res.status === 401) { window.location.href = '/login'; return; }
-    if (res.status === 429) { return res.json().then(function(d){ onError(d.error || 'Rate limit reached.'); }); }
     if (!res.ok) { return res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); }); }
     return res.json().then(function(data) {
-      onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn', data._fallback || false, data._model || '');
+      onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn');
     });
   }).catch(function(e){ onError(e.message); });
 }
@@ -920,13 +886,13 @@ function sendMsg() {
 
   function tryOnce() {
     attempt++;
-    callAPI(messages, sysPrompt, function(reply, stopReason, isFallback, modelName) {
+    callAPI(messages, sysPrompt, function(reply, stopReason) {
       var cleaned = sanitizeReply(reply);
       var bad = isBadReply(cleaned, stopReason);
       if (!bad) {
         removeTyping();
         chatHistory.push({role:'assistant', content:cleaned});
-        addBotMsg(cleaned, vizHtml, false, isFallback, modelName);
+        addBotMsg(cleaned, vizHtml, false);
         return;
       }
       if (attempt >= maxRetries) {
@@ -974,15 +940,13 @@ function mdToHtml(t) {
 
 function hideWelcome() { var w = document.getElementById('welcome'); if (w) w.remove(); }
 
-function addBotMsg(txt, extraHtml, isRetried, isFallback, modelName) {
+function addBotMsg(txt, extraHtml, isRetried) {
   hideWelcome();
   var m = document.getElementById('messages');
   var d = document.createElement('div');
   d.className = 'msg bot';
-  var badges = '';
-  if (isRetried)  badges += '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:3px 9px;font-size:10.5px;color:#92400E;margin-bottom:6px;display:inline-block;">Partial response - try rephrasing</div><br>';
-  if (isFallback) badges += '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:3px 9px;font-size:10.5px;color:#92400E;margin-bottom:6px;display:inline-block;">Answered by Groq Llama 3.1 (Anthropic rate limited)</div><br>';
-  var bubble = '<div class="bubble">' + badges + mdToHtml(txt) + '</div>' + (extraHtml || '');
+  var warn = isRetried ? '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:3px 9px;font-size:10.5px;color:#92400E;margin-bottom:6px;display:inline-block;">Partial response - try rephrasing</div>' : '';
+  var bubble = '<div class="bubble">' + warn + mdToHtml(txt) + '</div>' + (extraHtml || '');
   d.innerHTML = '<div class="av bot">F</div><div>' + bubble + '<div class="mtime">' + nowTime() + '</div></div>';
   m.appendChild(d);
   m.scrollTop = m.scrollHeight;
@@ -1009,10 +973,7 @@ function showTyping() {
 
 function removeTyping() { var t = document.getElementById('typ'); if (t) t.remove(); }
 
-function showModal() {}
-function hideModal() {}
-function toggleEye() {}
-function saveKey()  {}
+function showModal(){} function hideModal(){} function toggleEye(){} function saveKey(){}
 
 function ask(q) { document.getElementById('user-input').value = q; sendMsg(); }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
@@ -1045,9 +1006,7 @@ fetch('/api/me').then(function(r){
 }).catch(function(){});
 
 refreshStats();
-
-var nb = document.getElementById('notice-bar');
-if (nb) { nb.style.display = 'flex'; nb.textContent = 'Upload a CSV file to load your survey data.'; }
+setTimeout(function(){ if (!customData) document.getElementById('notice-bar').style.display = 'flex'; }, 1200);
 
 </script>
 </body>
