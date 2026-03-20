@@ -26,14 +26,18 @@ const helmet = require('helmet');
 app.use(helmet({ contentSecurityPolicy: false }));
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
+app.set('trust proxy', 1);
+
 app.use(session({
   secret:            process.env.SESSION_SECRET || 'flik-change-this-secret',
   resave:            false,
   saveUninitialized: false,
+  proxy:             true,
   cookie: {
     secure:   process.env.NODE_ENV === 'production',
     httpOnly: true,
-    maxAge:   8 * 60 * 60 * 1000   // 8 hours
+    sameSite: 'lax',
+    maxAge:   8 * 60 * 60 * 1000
   }
 }));
 
