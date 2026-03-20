@@ -222,7 +222,7 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
       </div>
     </div>
     <div class="input-zone">
-      <div class="notice-bar" id="notice-bar">Running on demo data - upload survey_responses.csv for live analysis.</div>
+      <div class="notice-bar" id="notice-bar">Loading live survey data from Snowflake...</div>
       <div class="input-row">
         <textarea id="user-input" placeholder="Ask about a unit by name or SAP#, request charts, tables, weighted analysis..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="send-btn" onclick="sendMsg()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
@@ -1047,8 +1047,38 @@ fetch('/api/me').then(function(r){
   if (el) el.textContent = u.name || u.username || 'User';
 }).catch(function(){});
 
+// Auto-load live data from Snowflake on startup
+var nb = document.getElementById('notice-bar');
+if (nb) { nb.style.display = 'flex'; nb.textContent = 'Loading live survey data from Snowflake...'; }
+
+fetch('/api/survey-data').then(function(r){
+  if (r.status === 401) { window.location.href = '/login'; return null; }
+  if (!r.ok) { return r.text().then(function(t){ throw new Error(t.slice(0,100)); }); }
+  return r.json();
+}).then(function(rows){
+  if (!rows) return;
+  DATA = rows.map(function(r){
+    return {
+      response_id:             r.response_id             || '',
+      unit_sap_number:         r.unit_sap_number         || 0,
+      unit:                    r.unit                    || '',
+      analytics_question_text: r.analytics_question_text || '',
+      csat:                    parseFloat(r.csat)        || 0,
+      csat_reason:             r.csat_reason             || ''
+    };
+  });
+  customData = true;
+  refreshStats();
+  var nb2 = document.getElementById('notice-bar');
+  if (nb2) nb2.style.display = 'none';
+  addBotMsg('Live data loaded: ' + DATA.length.toLocaleString() + ' rows from Snowflake. What would you like to analyse?');
+}).catch(function(e){
+  var nb3 = document.getElementById('notice-bar');
+  if (nb3) { nb3.style.display = 'flex'; nb3.textContent = 'Could not load Snowflake data: ' + e.message; }
+  refreshStats();
+});
+
 refreshStats();
-setTimeout(function(){ if (!customData) document.getElementById('notice-bar').style.display = 'flex'; }, 1200);
 
 </script>
 </body>
