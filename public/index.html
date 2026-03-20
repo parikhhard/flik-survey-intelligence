@@ -375,7 +375,7 @@ function refreshStats() {
   document.getElementById('st-units').textContent = a.uniqueUnits;
   document.getElementById('st-rank').textContent  = a.rankable + ' / ' + a.uniqueUnits;
   document.getElementById('st-avg').textContent   = a.gMean ? a.gMean + '/5' : '-';
-  document.getElementById('st-src').textContent   = customData ? 'CSV' : 'DEMO';
+  document.getElementById('st-src').textContent   = customData ? 'LIVE' : 'DEMO';
   renderUnitList('');
 }
 
@@ -794,31 +794,39 @@ function buildSystem(userQuery) {
   var topIssues = a.topReasons.slice(0,12).map(function(x){return x[0]+':'+x[1];}).join(', ');
   var worstQ = a.qStats.slice(0,6).map(function(x){return '"'+x.q.slice(0,45)+'"(wtd:'+x.wAvg+',n:'+x.n+')';}).join('; ');
 
-  return 'You are a senior hospitality analyst at FLIK Hospitality Group. Be rigorous, data-driven, and honest about data limitations.\n\n'
-    + 'UNIT DIRECTORY (SAP -> Display Name) - USE THIS to answer any "what is unit X called" questions:\n'
-    + unitDir + '\n\n'
-    + 'PORTFOLIO SNAPSHOT:\n'
-    + '- Total rows: ' + a.totalRows.toLocaleString() + ' | Unique responses: ' + a.uniqueResponses.toLocaleString() + ' | Units: ' + a.uniqueUnits + '\n'
-    + '- Rankable (n>=' + MIN_RANK + '): ' + a.rankable + ' | Reliable (n>=' + MIN_RELIABLE + '): ' + a.reliable + '\n'
-    + '- Portfolio weighted mean CSAT: ' + a.gMean + '/5\n'
-    + '- Scoring: Bayesian-weighted (C=' + CONF_C + '). CSAT 1-5: <3=at-risk, 3-3.9=neutral, 4+=positive\n'
+  return 'You are an expert hospitality data analyst at FLIK Hospitality Group (a Compass Group company). '
+    + 'Your role is to help operations managers understand survey performance and take action.\n\n'
+    + '## DATA MODEL\n'
+    + 'Scoring uses Bayesian shrinkage (C=' + CONF_C + '): wtd = (n*raw + ' + CONF_C + '*global_mean) / (n+' + CONF_C + '). '
+    + 'This prevents small-sample units from appearing misleadingly high or low.\n'
+    + 'CSAT scale 1-5: below 3.0 = at-risk, 3.0-3.9 = neutral, 4.0+ = performing well.\n'
+    + 'Confidence: High = n>=' + MIN_RELIABLE + ', Moderate = n>=' + MIN_RANK + ', Low = n<' + MIN_RANK + ' (exclude from rankings).\n\n'
+    + '## PORTFOLIO SNAPSHOT\n'
+    + 'Total rows: ' + a.totalRows.toLocaleString() + ' | Unique responses: ' + a.uniqueResponses.toLocaleString() + ' | Units: ' + a.uniqueUnits + '\n'
+    + 'Rankable: ' + a.rankable + ' | High-confidence: ' + a.reliable + ' | Portfolio weighted CSAT: ' + a.gMean + '/5\n'
     + unitFocus
-    + '\nALL UNIT DATA (pipe-delimited):\n' + unitLines
-    + '\n\nTOP ISSUES: ' + topIssues
-    + '\nWORST QUESTION TYPES: ' + worstQ
-    + '\n\nVISUALS ALREADY SHOWN TO USER:\n' + rendered
-    + '\n\nOUTPUT RULES:\n'
-    + '1. Write ONLY plain markdown text. No HTML tags. No code fences. No JSON.\n'
-    + '2. Do NOT reproduce table data - charts and tables are already displayed.\n'
-    + '3. Complete your full response. Never stop mid-sentence.\n'
-    + '4. End with a ### Key Takeaway section (3-5 sentences).\n'
-    + '\nANALYST RULES:\n'
-    + '- UNIT NAMES: Always use the display name from the UNIT DIRECTORY. Never refer to a unit by SAP number alone.\n'
-    + '- LOOKUPS: If asked "what is unit X" or "what is the name of SAP Y" - answer directly from the UNIT DIRECTORY above.\n'
-    + '- Cite n= for every claim. For units with n<' + MIN_RANK + ', say "insufficient data".\n'
-    + '- Use weighted scores for rankings. Flag when raw vs weighted diverge.\n'
-    + '- For at-risk units: name top 2-3 issues with concrete operational fixes.\n'
-    + '- Tone: senior analyst briefing VP of Operations. Specific, tight, no filler.';
+    + '\n## UNIT DIRECTORY (SAP -> Name, for lookups)\n'
+    + unitDir + '\n\n'
+    + '## ALL UNIT PERFORMANCE DATA\n'
+    + 'Format: Name|SAP|n|raw_avg|wtd_score|neg%|pos%|nps|confidence|top_issues\n'
+    + unitLines
+    + '\n\n## TOP FEEDBACK CATEGORIES (portfolio-wide)\n' + topIssues
+    + '\n\n## LOWEST-SCORING QUESTION TYPES\n' + worstQ
+    + '\n\n## VISUALS RENDERED FOR USER\n' + rendered
+    + '\n\n## RESPONSE RULES\n'
+    + '1. Output ONLY clean markdown. No HTML, no code fences, no JSON, no XML.\n'
+    + '2. Never reproduce data that is already shown in charts/tables above.\n'
+    + '3. Always complete your full response -- never cut off mid-sentence.\n'
+    + '4. Close every response with a ### Key Takeaway section (3-5 sentences max).\n'
+    + '5. For units with n<' + MIN_RANK + ' always say insufficient data -- never speculate.\n\n'
+    + '## ANALYST STANDARDS\n'
+    + '- Reference units by display name from the directory. Never use SAP numbers alone in prose.\n'
+    + '- Cite n= and confidence tier for every unit claim.\n'
+    + '- When weighted score diverges from raw average by >0.3, flag it and explain why (small n inflating raw score).\n'
+    + '- For at-risk units: diagnose the top 2-3 issues with specific evidence, then give 1-2 concrete operational recommendations per issue.\n'
+    + '- For rankings: always use weighted scores, not raw averages.\n'
+    + '- Tone: you are briefing the VP of Operations -- precise, evidence-based, no filler, no disclaimers.\n'
+    + '- If asked a lookup question (what is unit X, name of SAP Y), answer directly from the directory above without preamble.';
 }
 
 function sanitizeReply(raw) {
@@ -855,15 +863,48 @@ function isBadReply(s, stopReason) {
   return null;
 }
 
+// Server-side prompt cache hash -- avoids resending large system prompt every turn
+var _promptHash = null;
+
 function callAPI(messages, systemPrompt, onSuccess, onError) {
+  var body = { messages: messages };
+  // Use cached hash if available, otherwise send full system prompt
+  if (_promptHash) {
+    body.promptHash = _promptHash;
+  } else {
+    body.system = systemPrompt;
+  }
+
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ system: systemPrompt, messages: messages })
+    body: JSON.stringify(body)
   }).then(function(res) {
     if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) { return res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); }); }
+    if (!res.ok) {
+      return res.json().then(function(d) {
+        // Cache miss -- resend full prompt
+        if (d.error === 'prompt_cache_miss') {
+          _promptHash = null;
+          body = { system: systemPrompt, messages: messages };
+          return fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          }).then(function(r2) {
+            return r2.json().then(function(d2) {
+              if (d2._promptHash) _promptHash = d2._promptHash;
+              onSuccess(d2.content && d2.content[0] ? d2.content[0].text : '', d2.stop_reason || 'end_turn');
+            });
+          });
+        }
+        onError('Server error ' + res.status + ': ' + (d.error || ''));
+      }).catch(function() {
+        res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); });
+      });
+    }
     return res.json().then(function(data) {
+      if (data._promptHash) _promptHash = data._promptHash;
       onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn');
     });
   }).catch(function(e){ onError(e.message); });
@@ -981,6 +1022,7 @@ function autoResize(el) { el.style.height=''; el.style.height=Math.min(el.scroll
 
 function clearChat() {
   chatHistory = [];
+  _promptHash = null;
   var m = document.getElementById('messages');
   m.innerHTML = '<div class="welcome" id="welcome">'
     + '<div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>'
@@ -1005,38 +1047,8 @@ fetch('/api/me').then(function(r){
   if (el) el.textContent = u.name || u.username || 'User';
 }).catch(function(){});
 
-// Auto-load live data from Snowflake on startup
-var nb = document.getElementById('notice-bar');
-if (nb) { nb.style.display = 'flex'; nb.textContent = 'Loading live survey data from Snowflake...'; }
-
-fetch('/api/survey-data').then(function(r){
-  if (r.status === 401) { window.location.href = '/login'; return null; }
-  if (!r.ok) { return r.text().then(function(t){ throw new Error(t.slice(0,100)); }); }
-  return r.json();
-}).then(function(rows){
-  if (!rows) return;
-  DATA = rows.map(function(r){
-    return {
-      response_id:             r.response_id             || '',
-      unit_sap_number:         r.unit_sap_number         || 0,
-      unit:                    r.unit                    || '',
-      analytics_question_text: r.analytics_question_text || '',
-      csat:                    parseFloat(r.csat)        || 0,
-      csat_reason:             r.csat_reason             || ''
-    };
-  });
-  customData = true;
-  refreshStats();
-  var nb2 = document.getElementById('notice-bar');
-  if (nb2) nb2.style.display = 'none';
-  addBotMsg('Live data loaded: ' + DATA.length.toLocaleString() + ' rows from Snowflake. What would you like to analyse?');
-}).catch(function(e){
-  var nb3 = document.getElementById('notice-bar');
-  if (nb3) { nb3.style.display = 'flex'; nb3.textContent = 'Could not load Snowflake data: ' + e.message; }
-  refreshStats();
-});
-
 refreshStats();
+setTimeout(function(){ if (!customData) document.getElementById('notice-bar').style.display = 'flex'; }, 1200);
 
 </script>
 </body>
