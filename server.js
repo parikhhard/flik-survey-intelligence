@@ -290,6 +290,23 @@ function sfQuery(sql, callback) {
   });
 }
 
+// Keepalive — ping Snowflake every 4 minutes to prevent idle connection drop
+setInterval(function () {
+  if (sfConn && sfConn.isUp()) {
+    sfConn.execute({
+      sqlText:  'SELECT 1',
+      complete: function (err) {
+        if (err) {
+          console.log('[Keepalive] Connection lost, will reconnect on next request.');
+          sfConn = null;
+        } else {
+          console.log('[Keepalive] Connection healthy.');
+        }
+      }
+    });
+  }
+}, 4 * 60 * 1000);
+
 // ── Bootstrap user table ──────────────────────────────────────────────────────
 function bootstrapUserTable() {
   sfQuery(`
@@ -392,21 +409,20 @@ app.post('/api/chat', requireAuth, function (req, res) {
   const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
   const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-3-5-sonnet', '" + escaped + "') AS RESPONSE";
 
-  // Retry once on stale connection errors
+  // Retry once with fresh connection if first attempt fails
   var attempt = 0;
   function runQuery() {
     attempt++;
-    sfConn = null; // force fresh connection on retry
     getSnowflakeConnection(function (err, conn) {
       if (err) return res.status(503).json({ error: 'Snowflake unavailable: ' + err.message });
       conn.execute({
         sqlText:  sql,
         complete: function (queryErr, stmt, rows) {
           if (queryErr) {
-            sfConn = null;
+            sfConn = null; // reset so retry gets a fresh connection
             if (attempt < 2) {
-              console.log('[Cortex] Retrying after error:', queryErr.message);
-              return setTimeout(runQuery, 1500);
+              console.log('[Cortex] Attempt ' + attempt + ' failed, retrying with fresh connection...');
+              return setTimeout(runQuery, 1000);
             }
             console.error('[Cortex]', queryErr.message);
             return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
