@@ -277,13 +277,22 @@ function getSnowflakeConnection(callback) {
   });
 }
 
-function sfQuery(sql, callback) {
+function sfQuery(sql, callback, retryCount) {
+  retryCount = retryCount || 0;
   getSnowflakeConnection(function (err, conn) {
     if (err) return callback(err);
     conn.execute({
       sqlText:  sql,
       complete: function (qErr, stmt, rows) {
-        if (qErr) { sfConn = null; return callback(qErr); }
+        if (qErr) {
+          sfConn = null;
+          // Retry once on connection errors
+          if (retryCount < 1 && (qErr.code === '250001' || qErr.message.indexOf('connect') !== -1 || qErr.message.indexOf('network') !== -1)) {
+            console.log('[Snowflake] Retrying after connection error...');
+            return setTimeout(function() { sfQuery(sql, callback, retryCount + 1); }, 1000);
+          }
+          return callback(qErr);
+        }
         callback(null, rows);
       }
     });
@@ -374,6 +383,8 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
       }
     });
   });
+  }
+  tryCortex();
 });
 
 // ── AI endpoint — Snowflake Cortex ────────────────────────────────────────────
@@ -392,16 +403,23 @@ app.post('/api/chat', requireAuth, function (req, res) {
   const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
   const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-3-5-sonnet', '" + escaped + "') AS RESPONSE";
 
-  getSnowflakeConnection(function (err, conn) {
-    if (err) return res.status(503).json({ error: 'Snowflake unavailable: ' + err.message });
-    conn.execute({
-      sqlText:  sql,
-      complete: function (queryErr, stmt, rows) {
-        if (queryErr) {
-          sfConn = null;
-          console.error('[Cortex]', queryErr.message);
-          return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
-        }
+  var chatAttempt = 0;
+  function tryCortex() {
+    chatAttempt++;
+    getSnowflakeConnection(function (err, conn) {
+      if (err) return res.status(503).json({ error: 'Snowflake unavailable: ' + err.message });
+      conn.execute({
+        sqlText:  sql,
+        complete: function (queryErr, stmt, rows) {
+          if (queryErr) {
+            sfConn = null;
+            if (chatAttempt < 2) {
+              console.log('[Cortex] Retrying after error...');
+              return setTimeout(tryCortex, 1000);
+            }
+            console.error('[Cortex]', queryErr.message);
+            return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
+          }
         const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
         res.json({
           content:     [{ type: 'text', text: text }],
@@ -411,6 +429,8 @@ app.post('/api/chat', requireAuth, function (req, res) {
       }
     });
   });
+  }
+  tryCortex();
 });
 
 // ── Static + frontend ─────────────────────────────────────────────────────────
