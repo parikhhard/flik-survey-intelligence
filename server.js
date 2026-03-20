@@ -229,6 +229,51 @@ app.post('/api/chat', requireAuth, function (req, res) {
   });
 });
 
+
+// ── Survey data endpoint ──────────────────────────────────────────────────────
+app.get('/api/survey-data', requireAuth, function (req, res) {
+  const sql = `
+    SELECT
+      RESPONSE_ID,
+      UNIT_SAP_NUMBER,
+      UNIT                    AS UNIT_NAME,
+      ANALYTICS_QUESTION_TEXT AS ANALYTICS_QUESTION_TEXT,
+      CSAT                    AS CSAT,
+      CSAT_REASON             AS CSAT_REASON
+    FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
+    WHERE CSAT_REASON IS NOT NULL
+      AND CSAT IS NOT NULL
+    ORDER BY UNIT_SAP_NUMBER
+  `;
+
+  getSnowflakeConnection(function (err, conn) {
+    if (err) return res.status(503).json({ error: 'Snowflake unavailable: ' + err.message });
+
+    conn.execute({
+      sqlText:  sql,
+      complete: function (queryErr, stmt, rows) {
+        if (queryErr) {
+          sfConn = null;
+          console.error('[Survey Data] Query error:', queryErr.message);
+          return res.status(500).json({ error: 'Query failed: ' + queryErr.message });
+        }
+        const out = rows.map(function (r) {
+          return {
+            response_id:             String(r.RESPONSE_ID      || ''),
+            unit_sap_number:         String(r.UNIT_SAP_NUMBER  || ''),
+            unit:                    String(r.UNIT_NAME        || ''),
+            analytics_question_text: String(r.ANALYTICS_QUESTION_TEXT || ''),
+            csat:                    parseFloat(r.CSAT)        || 0,
+            csat_reason:             String(r.CSAT_REASON      || '')
+          };
+        });
+        console.log('[Survey Data] Served ' + out.length + ' rows to ' + req.session.user.username);
+        res.json(out);
+      }
+    });
+  });
+});
+
 // ── Serve frontend ────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'public')));
 
