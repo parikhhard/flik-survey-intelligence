@@ -379,7 +379,7 @@ app.post('/api/chat', requireAuth, function (req, res) {
   conversation += 'ASSISTANT:';
 
   const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
-  const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-3-5-sonnet', '" + escaped + "') AS RESPONSE";
+  const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-3-7-sonnet', '" + escaped + "') AS RESPONSE";
 
   sfQuery(sql, function (queryErr, rows) {
     if (queryErr) {
