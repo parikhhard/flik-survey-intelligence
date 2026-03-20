@@ -277,22 +277,13 @@ function getSnowflakeConnection(callback) {
   });
 }
 
-function sfQuery(sql, callback, retryCount) {
-  retryCount = retryCount || 0;
+function sfQuery(sql, callback) {
   getSnowflakeConnection(function (err, conn) {
     if (err) return callback(err);
     conn.execute({
       sqlText:  sql,
       complete: function (qErr, stmt, rows) {
-        if (qErr) {
-          sfConn = null;
-          // Retry once on connection errors
-          if (retryCount < 1 && (qErr.code === '250001' || qErr.message.indexOf('connect') !== -1 || qErr.message.indexOf('network') !== -1)) {
-            console.log('[Snowflake] Retrying after connection error...');
-            return setTimeout(function() { sfQuery(sql, callback, retryCount + 1); }, 1000);
-          }
-          return callback(qErr);
-        }
+        if (qErr) { sfConn = null; return callback(qErr); }
         callback(null, rows);
       }
     });
@@ -302,7 +293,7 @@ function sfQuery(sql, callback, retryCount) {
 // ── Bootstrap user table ──────────────────────────────────────────────────────
 function bootstrapUserTable() {
   sfQuery(`
-    CREATE TABLE IF NOT EXISTS E15_ANALYST_SANDBOX.PARIKH01.APP_USERS (
+    CREATE TABLE IF NOT EXISTS FLIK_ANALYTICS.CURIOSITY_WIDGETS.APP_USERS (
       EMAIL         VARCHAR(255) PRIMARY KEY,
       FULL_NAME     VARCHAR(255),
       PASSWORD_HASH VARCHAR(255),
@@ -321,7 +312,7 @@ function dbGetUser(email) {
   return new Promise(function (resolve, reject) {
     const e = email.replace(/'/g, "''");
     sfQuery(
-      `SELECT * FROM E15_ANALYST_SANDBOX.PARIKH01.APP_USERS WHERE EMAIL = '${e}' LIMIT 1`,
+      `SELECT * FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.APP_USERS WHERE EMAIL = '${e}' LIMIT 1`,
       function (err, rows) {
         if (err) return reject(err);
         resolve(rows && rows.length ? rows[0] : null);
@@ -335,7 +326,7 @@ function dbCreateUser(email, fullname, hash) {
     const e = email.replace(/'/g, "''");
     const n = fullname.replace(/'/g, "''");
     sfQuery(
-      `INSERT INTO E15_ANALYST_SANDBOX.PARIKH01.APP_USERS (EMAIL, FULL_NAME, PASSWORD_HASH, IS_ACTIVE)
+      `INSERT INTO FLIK_ANALYTICS.CURIOSITY_WIDGETS.APP_USERS (EMAIL, FULL_NAME, PASSWORD_HASH, IS_ACTIVE)
        VALUES ('${e}', '${n}', '${hash}', TRUE)`,
       function (err) { if (err) reject(err); else resolve(); }
     );
@@ -383,8 +374,6 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
       }
     });
   });
-  }
-  tryCortex();
 });
 
 // ── AI endpoint — Snowflake Cortex ────────────────────────────────────────────
@@ -403,9 +392,11 @@ app.post('/api/chat', requireAuth, function (req, res) {
   const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
   const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-3-5-sonnet', '" + escaped + "') AS RESPONSE";
 
-  var chatAttempt = 0;
-  function tryCortex() {
-    chatAttempt++;
+  // Retry once on stale connection errors
+  var attempt = 0;
+  function runQuery() {
+    attempt++;
+    sfConn = null; // force fresh connection on retry
     getSnowflakeConnection(function (err, conn) {
       if (err) return res.status(503).json({ error: 'Snowflake unavailable: ' + err.message });
       conn.execute({
@@ -413,24 +404,24 @@ app.post('/api/chat', requireAuth, function (req, res) {
         complete: function (queryErr, stmt, rows) {
           if (queryErr) {
             sfConn = null;
-            if (chatAttempt < 2) {
-              console.log('[Cortex] Retrying after error...');
-              return setTimeout(tryCortex, 1000);
+            if (attempt < 2) {
+              console.log('[Cortex] Retrying after error:', queryErr.message);
+              return setTimeout(runQuery, 1500);
             }
             console.error('[Cortex]', queryErr.message);
             return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
           }
-        const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
-        res.json({
-          content:     [{ type: 'text', text: text }],
-          stop_reason: 'end_turn',
-          _provider:   'snowflake-cortex'
-        });
-      }
+          const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
+          res.json({
+            content:     [{ type: 'text', text: text }],
+            stop_reason: 'end_turn',
+            _provider:   'snowflake-cortex'
+          });
+        }
+      });
     });
-  });
   }
-  tryCortex();
+  runQuery();
 });
 
 // ── Static + frontend ─────────────────────────────────────────────────────────
