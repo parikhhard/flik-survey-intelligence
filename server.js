@@ -228,17 +228,11 @@ app.get('/api/me', requireAuth, function (req, res) {
 });
 
 // ── Snowflake connection ──────────────────────────────────────────────────────
-let sfConn       = null;
-let sfConnecting = false;
+// Create a fresh connection for every request.
+// Cortex queries are long-running and the SDK connection becomes unreliable
+// after the first Cortex call. Fresh connections are the simplest fix.
 
-function getSnowflakeConnection(callback) {
-  if (sfConn && sfConn.isUp()) return callback(null, sfConn);
-  if (sfConnecting) {
-    setTimeout(() => getSnowflakeConnection(callback), 500);
-    return;
-  }
-  sfConnecting = true;
-
+function buildConnOptions() {
   const opts = {
     account:        process.env.SNOWFLAKE_ACCOUNT   || 'uya38094.us-east-1.snowflakecomputing.com',
     username:       process.env.SNOWFLAKE_USERNAME  || 'PARIKH01_SRV',
@@ -247,65 +241,43 @@ function getSnowflakeConnection(callback) {
     database:       'FLIK_ANALYTICS',
     schema:         'CURIOSITY_WIDGETS',
     loginTimeout:   30,
-    networkTimeout: 60000
+    networkTimeout: 120000
   };
 
   if (process.env.SNOWFLAKE_PRIVATE_KEY) {
-    try {
-      const pk = crypto.createPrivateKey({ key: process.env.SNOWFLAKE_PRIVATE_KEY, format: 'pem' });
-      opts.authenticator = 'SNOWFLAKE_JWT';
-      opts.privateKey    = pk.export({ format: 'pem', type: 'pkcs8' });
-      console.log('[Snowflake] Key-pair auth');
-    } catch (e) {
-      sfConnecting = false;
-      return callback(new Error('Invalid private key: ' + e.message));
-    }
+    const pk = crypto.createPrivateKey({ key: process.env.SNOWFLAKE_PRIVATE_KEY, format: 'pem' });
+    opts.authenticator = 'SNOWFLAKE_JWT';
+    opts.privateKey    = pk.export({ format: 'pem', type: 'pkcs8' });
   } else if (process.env.SNOWFLAKE_PASSWORD) {
     opts.password = process.env.SNOWFLAKE_PASSWORD;
-    console.log('[Snowflake] Password auth');
   } else {
-    sfConnecting = false;
-    return callback(new Error('No Snowflake auth configured.'));
+    throw new Error('No Snowflake auth configured.');
   }
-
-  snowflake.createConnection(opts).connect(function (err, c) {
-    sfConnecting = false;
-    if (err) { console.error('[Snowflake] Failed:', err.message); return callback(err); }
-    sfConn = c;
-    console.log('[Snowflake] Connected.');
-    callback(null, sfConn);
-  });
+  return opts;
 }
 
 function sfQuery(sql, callback) {
-  getSnowflakeConnection(function (err, conn) {
-    if (err) return callback(err);
-    conn.execute({
+  let opts;
+  try { opts = buildConnOptions(); }
+  catch (e) { return callback(e); }
+
+  const conn = snowflake.createConnection(opts);
+  conn.connect(function (err, c) {
+    if (err) {
+      console.error('[Snowflake] Connect error:', err.message);
+      return callback(err);
+    }
+    c.execute({
       sqlText:  sql,
       complete: function (qErr, stmt, rows) {
-        if (qErr) { sfConn = null; return callback(qErr); }
+        // Always destroy connection when done
+        try { c.destroy(function(){}); } catch(e) {}
+        if (qErr) return callback(qErr);
         callback(null, rows);
       }
     });
   });
 }
-
-// Keepalive — ping Snowflake every 4 minutes to prevent idle connection drop
-setInterval(function () {
-  if (sfConn && sfConn.isUp()) {
-    sfConn.execute({
-      sqlText:  'SELECT 1',
-      complete: function (err) {
-        if (err) {
-          console.log('[Keepalive] Connection lost, will reconnect on next request.');
-          sfConn = null;
-        } else {
-          console.log('[Keepalive] Connection healthy.');
-        }
-      }
-    });
-  }
-}, 4 * 60 * 1000);
 
 // ── Bootstrap user table ──────────────────────────────────────────────────────
 function bootstrapUserTable() {
@@ -366,30 +338,23 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
     'ORDER BY UNIT_SAP_NUMBER'
   ].join('\n');
 
-  getSnowflakeConnection(function (err, conn) {
-    if (err) return res.status(503).json({ error: 'Snowflake unavailable: ' + err.message });
-    conn.execute({
-      sqlText: sql,
-      complete: function (queryErr, stmt, rows) {
-        if (queryErr) {
-          sfConn = null;
-          console.error('[Survey Data]', queryErr.message);
-          return res.status(500).json({ error: 'Query failed: ' + queryErr.message });
-        }
-        var out = rows.map(function (r) {
-          return {
-            response_id:             String(r.RESPONSE_ID               || ''),
-            unit_sap_number:         String(r.UNIT_SAP_NUMBER           || ''),
-            unit:                    String(r.UNIT_NAME                 || ''),
-            analytics_question_text: String(r.ANALYTICS_QUESTION_TEXT   || ''),
-            csat:                    parseFloat(r.CSAT)                 || 0,
-            csat_reason:             String(r.CSAT_REASON               || '')
-          };
-        });
-        console.log('[Survey Data] ' + out.length + ' rows -> ' + req.session.user.email);
-        res.json(out);
-      }
+  sfQuery(sql, function (err, rows) {
+    if (err) {
+      console.error('[Survey Data]', err.message);
+      return res.status(500).json({ error: 'Query failed: ' + err.message });
+    }
+    var out = rows.map(function (r) {
+      return {
+        response_id:             String(r.RESPONSE_ID               || ''),
+        unit_sap_number:         String(r.UNIT_SAP_NUMBER           || ''),
+        unit:                    String(r.UNIT_NAME                 || ''),
+        analytics_question_text: String(r.ANALYTICS_QUESTION_TEXT   || ''),
+        csat:                    parseFloat(r.CSAT)                 || 0,
+        csat_reason:             String(r.CSAT_REASON               || '')
+      };
     });
+    console.log('[Survey Data] ' + out.length + ' rows -> ' + req.session.user.email);
+    res.json(out);
   });
 });
 
@@ -409,35 +374,18 @@ app.post('/api/chat', requireAuth, function (req, res) {
   const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
   const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-3-5-sonnet', '" + escaped + "') AS RESPONSE";
 
-  // Retry once with fresh connection if first attempt fails
-  var attempt = 0;
-  function runQuery() {
-    attempt++;
-    getSnowflakeConnection(function (err, conn) {
-      if (err) return res.status(503).json({ error: 'Snowflake unavailable: ' + err.message });
-      conn.execute({
-        sqlText:  sql,
-        complete: function (queryErr, stmt, rows) {
-          if (queryErr) {
-            sfConn = null; // reset so retry gets a fresh connection
-            if (attempt < 2) {
-              console.log('[Cortex] Attempt ' + attempt + ' failed, retrying with fresh connection...');
-              return setTimeout(runQuery, 1000);
-            }
-            console.error('[Cortex]', queryErr.message);
-            return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
-          }
-          const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
-          res.json({
-            content:     [{ type: 'text', text: text }],
-            stop_reason: 'end_turn',
-            _provider:   'snowflake-cortex'
-          });
-        }
-      });
+  sfQuery(sql, function (queryErr, rows) {
+    if (queryErr) {
+      console.error('[Cortex]', queryErr.message);
+      return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
+    }
+    const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
+    res.json({
+      content:     [{ type: 'text', text: text }],
+      stop_reason: 'end_turn',
+      _provider:   'snowflake-cortex'
     });
-  }
-  runQuery();
+  });
 });
 
 // ── Static + frontend ─────────────────────────────────────────────────────────
@@ -465,8 +413,10 @@ app.use(function (req, res) {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, function () {
   console.log('FLIK Survey Intelligence on port ' + PORT + ' [' + (process.env.NODE_ENV || 'development') + ']');
-  getSnowflakeConnection(function (err) {
-    if (err) { console.error('[Startup] Snowflake failed:', err.message); return; }
+  // Test connection on startup
+  sfQuery('SELECT 1', function (err) {
+    if (err) { console.error('[Startup] Snowflake test failed:', err.message); return; }
+    console.log('[Startup] Snowflake OK.');
     bootstrapUserTable();
   });
 });
