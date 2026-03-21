@@ -31,7 +31,6 @@ header{height:62px;flex-shrink:0;background:var(--warm);border-bottom:1px solid 
 .hbtn:hover{border-color:var(--g2);color:var(--g2);background:var(--g6);}
 .hbtn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;}
 .hbtn.active{border-color:rgba(45,106,79,.3);background:var(--g6);color:var(--g2);}
-#csv-file{display:none;}
 .app{flex:1;display:flex;overflow:hidden;}
 aside{width:270px;flex-shrink:0;background:var(--warm);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;}
 .aside-scroll{flex:1;overflow-y:auto;padding:12px 10px;}
@@ -160,11 +159,11 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
   </div>
   <div class="hact">
     <div class="badge"><div class="pdot"></div>AI Analyst</div>
+
     <button class="hbtn" onclick="clearChat()">
       <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
       New Chat
     </button>
-    <input type="file" id="csv-file" accept=".csv" onchange="handleCSV(this)">
     <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;background:var(--g6);border:1px solid var(--bd2);border-radius:20px;font-size:11px;color:var(--g2);font-weight:600;">
       <span id="user-name">...</span>
       <a href="/logout" style="color:var(--slate);text-decoration:none;font-size:10px;font-weight:400;opacity:0.7;">Sign out</a>
@@ -761,24 +760,38 @@ function buildSystem(userQuery) {
 
   var tu = findUnit(userQuery, a.unitStats);
 
-  // Cap units to prevent prompt timeout -- top 30 by score + focus unit
-  var MAX_UNITS = 30;
-  var topUnits  = a.unitStats.slice(0, MAX_UNITS);
-  if (tu) {
-    var inTop = false;
-    for (var ti = 0; ti < topUnits.length; ti++) { if (topUnits[ti].key === tu.key) { inTop = true; break; } }
-    if (!inTop) topUnits = [tu].concat(topUnits.slice(0, MAX_UNITS - 1));
-  }
+  // Include: top 20 + bottom 10 + focus unit
+  // This covers both "best performers" and "at-risk units" questions
+  // while keeping prompt under 6000 chars for Cortex timeout
+  var top20    = a.unitStats.slice(0, 20);
+  var bottom10 = a.unitStats.slice(-10);
 
-  // Compact directory: SAP=Name only
-  var unitDir = topUnits.map(function(u) {
-    return (u.sap || '?') + '=' + u.name.slice(0, 30);
+  // Merge, dedup by key
+  var seen = {};
+  var featured = [];
+  function addUnit(u) { if (!seen[u.key]) { seen[u.key] = 1; featured.push(u); } }
+  if (tu) addUnit(tu);
+  top20.forEach(addUnit);
+  bottom10.forEach(addUnit);
+
+  var totalUnits = a.uniqueUnits;
+  var shownNote  = totalUnits > featured.length
+    ? '(showing top 20 + bottom 10 of ' + totalUnits + ' total units)'
+    : '';
+
+  // Compact directory
+  var unitDir = featured.map(function(u) {
+    return (u.sap || '?') + '=' + u.name.slice(0, 28);
   }).join(', ');
 
-  // Compact data lines
-  var unitLines = topUnits.map(function(u) {
-    return u.name.slice(0,28) + '|' + (u.sap||'?') + '|n:' + u.responses + '|wtd:' + u.wScore
-      + '|neg:' + u.negRate + '%|' + u.conf.label
+  // Compact data lines -- mark bottom units clearly
+  var bottom10Keys = {};
+  bottom10.forEach(function(u) { bottom10Keys[u.key] = 1; });
+
+  var unitLines = featured.map(function(u) {
+    var tag = bottom10Keys[u.key] && u.wScore < 3 ? '[AT-RISK]' : '';
+    return tag + u.name.slice(0,28) + '|' + (u.sap||'?') + '|n:' + u.responses
+      + '|wtd:' + u.wScore + '|neg:' + u.negRate + '%|' + u.conf.label
       + '|' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,15)+'('+x[1]+')';}).join(',');
   }).join('\n');
 
@@ -787,7 +800,7 @@ function buildSystem(userQuery) {
     unitFocus = '\nFOCUS: ' + tu.name + ' (SAP ' + tu.sap + ')'
       + ' wtd:' + tu.wScore + ' raw:' + tu.rawAvg + ' n=' + tu.responses
       + ' ' + tu.conf.label + ' neg:' + tu.negRate + '%'
-      + ' issues:' + tu.topReasons.slice(0,3).map(function(x){return x[0]+'('+x[1]+')';}).join(',') + '\n';
+      + ' issues:' + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(',') + '\n';
   }
 
   var rendered  = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
@@ -796,14 +809,16 @@ function buildSystem(userQuery) {
 
   var prompt = 'You are a FLIK Hospitality analyst. Bayesian-weighted CSAT (C=30). Scale 1-5: <3=at-risk, 3-3.9=neutral, 4+=good. '
     + 'Confidence: High=n>=15, Moderate=n>=5, Low=n<5.\n\n'
-    + 'Portfolio: ' + a.uniqueUnits + ' units | ' + a.uniqueResponses.toLocaleString() + ' responses | mean ' + a.gMean + '/5 | rankable:' + a.rankable + '\n'
+    + 'Portfolio: ' + totalUnits + ' units total | ' + a.uniqueResponses.toLocaleString() + ' responses | mean CSAT ' + a.gMean + '/5'
+    + ' | rankable:' + a.rankable + ' | at-risk(wtd<3):' + a.unitStats.filter(function(u){return u.wScore < 3 && u.rankable;}).length
+    + ' | thriving(wtd>=4):' + a.unitStats.filter(function(u){return u.wScore >= 4 && u.rankable;}).length + '\n'
     + unitFocus
-    + '\nUnit directory (SAP=Name, top ' + topUnits.length + '):\n' + unitDir + '\n\n'
-    + 'Unit data (name|SAP|n|wtd|neg%|conf|top issues):\n' + unitLines + '\n\n'
-    + 'Top issues: ' + topIssues + '\n'
+    + '\nUnits ' + shownNote + ' (SAP=Name):\n' + unitDir + '\n\n'
+    + 'Data ([AT-RISK] = bottom performer, name|SAP|n|wtd|neg%|conf|top issues):\n' + unitLines + '\n\n'
+    + 'Top portfolio issues: ' + topIssues + '\n'
     + 'Visuals shown: ' + rendered + '\n\n'
     + 'Rules: plain markdown only, no HTML, cite n= for every claim, end with ### Key Takeaway, '
-    + 'use display names not SAP numbers, flag low confidence data.';
+    + 'use display names not SAP numbers, flag low confidence, never speculate on n<5 units.';
 
   return prompt;
 }
