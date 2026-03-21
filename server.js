@@ -258,9 +258,13 @@ app.post('/forgot-password', async function (req, res) {
                 We received a request to reset your FLIK password. Click the button below to set a new password.
                 This link expires in <strong>30 minutes</strong>.
               </p>
-              <a href="${resetUrl}" style="display:inline-block;background:linear-gradient(135deg,#1B4332,#40916C);color:white;padding:14px 32px;border-radius:10px;text-decoration:none;font-weight:600;font-size:15px;margin-bottom:24px;">
-                Reset My Password
-              </a>
+              <table cellpadding="0" cellspacing="0" style="margin-bottom:24px;">
+                <tr>
+                  <td style="background-color:#2D6A4F;border-radius:10px;padding:14px 32px;">
+                    <a href="${resetUrl}" style="color:#ffffff !important;text-decoration:none;font-weight:600;font-size:15px;display:inline-block;">Reset My Password</a>
+                  </td>
+                </tr>
+              </table>
               <p style="color:#9CA3AF;font-size:12px;line-height:1.6;">
                 If you did not request a password reset, you can safely ignore this email.<br>
                 Your password will not change.
