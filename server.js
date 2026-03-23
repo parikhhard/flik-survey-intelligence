@@ -42,6 +42,7 @@ const pendingSignups = new Map();
 
 // ── Send email helper — uses Brevo (any recipient) or Resend fallback ─────────
 async function sendEmail(to, subject, html) {
+  console.log('[Email] Sending to:', to, '| Brevo key set:', !!process.env.BREVO_API_KEY, '| Resend key set:', !!process.env.RESEND_API_KEY);
   const brevoKey  = process.env.BREVO_API_KEY;
   const resendKey = process.env.RESEND_API_KEY;
 
