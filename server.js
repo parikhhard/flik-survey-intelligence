@@ -37,6 +37,27 @@ app.use(session({
   }
 }));
 
+// ── In-memory pending signups { email -> { fullname, hash, code, expires } } ──
+const pendingSignups = new Map();
+
+// ── Send email helper ─────────────────────────────────────────────────────────
+async function sendEmail(to, subject, html) {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey) {
+    console.log('[Email] No RESEND_API_KEY set. Would send to ' + to + ': ' + subject);
+    return;
+  }
+  const r = await fetch('https://api.resend.com/emails', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + resendKey },
+    body: JSON.stringify({ from: 'FLIK Survey Intelligence <onboarding@resend.dev>', to: [to], subject, html })
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error('Resend error: ' + t.slice(0, 100));
+  }
+}
+
 // ── In-memory reset tokens { token -> { email, expires } } ───────────────────
 const resetTokens = new Map();
 
@@ -181,22 +202,118 @@ app.post('/signup', async function (req, res) {
   const email    = (req.body.email    || '').trim().toLowerCase();
   const password =  req.body.password || '';
   const confirm  =  req.body.confirm  || '';
-  if (!validDomain(email))    return res.redirect('/signup?error=domain');
+  if (!validDomain(email))   return res.redirect('/signup?error=domain');
   if (password.length < 8)   return res.redirect('/signup?error=weak');
   if (password !== confirm)  return res.redirect('/signup?error=mismatch');
   try {
     const existing = await dbGetUser(email);
     if (existing) return res.redirect('/signup?error=exists');
-    const hash = await bcrypt.hash(password, 12);
-    await dbCreateUser(email, fullname, hash);
-    res.redirect('/login?msg=registered');
+
+    // Generate 6-digit code
+    const code    = String(Math.floor(100000 + Math.random() * 900000));
+    const expires = Date.now() + 10 * 60 * 1000; // 10 minutes
+    const hash    = await bcrypt.hash(password, 12);
+
+    // Store pending signup
+    pendingSignups.set(email, { fullname, hash, code, expires });
+
+    // Send verification email
+    const firstName = fullname.split(' ')[0] || 'there';
+    await sendEmail(email, 'Your FLIK verification code', `
+      <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:40px 24px;background:#FFFEF9;border-radius:16px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
+          <div style="width:40px;height:40px;border-radius:10px;background:#2D6A4F;display:flex;align-items:center;justify-content:center;">
+            <span style="color:white;font-size:18px;font-weight:700;">F</span>
+          </div>
+          <div>
+            <div style="font-size:17px;font-weight:700;color:#1B4332;">FLIK Survey Intelligence</div>
+            <div style="font-size:10px;color:#9CA3AF;text-transform:uppercase;letter-spacing:.1em;">Email Verification</div>
+          </div>
+        </div>
+        <h2 style="color:#1C1C1E;font-size:22px;margin-bottom:8px;">Hi ${firstName},</h2>
+        <p style="color:#6B7280;line-height:1.6;margin-bottom:24px;">
+          Use the code below to verify your email and complete your FLIK account setup.
+          This code expires in <strong>10 minutes</strong>.
+        </p>
+        <div style="background:#F0FDF4;border:2px solid #2D6A4F;border-radius:12px;padding:24px;text-align:center;margin-bottom:24px;">
+          <div style="font-size:36px;font-weight:700;color:#1B4332;letter-spacing:8px;font-family:monospace;">${code}</div>
+          <div style="font-size:12px;color:#6B7280;margin-top:8px;">Enter this code on the verification page</div>
+        </div>
+        <p style="color:#9CA3AF;font-size:12px;line-height:1.6;">
+          If you did not request this, you can safely ignore this email.
+        </p>
+        <hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;">
+        <p style="color:#D1D5DB;font-size:11px;">FLIK Hospitality Group -- Internal Analytics</p>
+      </div>
+    `);
+
+    // If no Resend key, log the code for development
+    if (!process.env.RESEND_API_KEY) {
+      console.log('[Verify] Code for ' + email + ': ' + code);
+    }
+
+    res.redirect('/verify-email?email=' + encodeURIComponent(email));
   } catch (e) {
     console.error('[Signup]', e.message);
     res.redirect('/signup?error=failed');
   }
 });
 
-// ── Forgot password ───────────────────────────────────────────────────────────
+// ── Verify email ──────────────────────────────────────────────────────────────
+app.get('/verify-email', function (req, res) {
+  if (req.session && req.session.authenticated) return res.redirect('/');
+  const email = (req.query.email || '').trim().toLowerCase();
+  const errMap = {
+    wrong:   'Incorrect code. Please try again.',
+    expired: 'Code expired. Please sign up again.',
+    failed:  'Verification failed. Please try again.'
+  };
+  const err = errMap[req.query.error] || '';
+
+  if (!email) return res.redirect('/signup');
+
+  res.send(AUTH_HEAD('Verify Email') + `<div class="card">${LOGO}
+  <h1>Check your email</h1>
+  <p class="desc">We sent a 6-digit code to <strong style="color:#52B788;">${email}</strong>. Enter it below to verify your account.</p>
+  ${err ? `<div class="error">${err}</div>` : ''}
+  <form method="POST" action="/verify-email">
+    <input type="hidden" name="email" value="${email}">
+    <label>Verification Code</label>
+    <input type="text" name="code" placeholder="000000" maxlength="6" autocomplete="one-time-code"
+      required autofocus inputmode="numeric"
+      style="font-size:28px;font-weight:700;letter-spacing:10px;text-align:center;font-family:monospace;">
+    <button type="submit">Verify &amp; Create Account</button>
+  </form>
+  <div class="switch">Wrong email? <a href="/signup">Start over</a></div>
+  <p style="text-align:center;margin-top:12px;font-size:12px;color:rgba(216,243,220,0.35);">Code expires in 10 minutes</p>
+</div></body></html>`);
+});
+
+app.post('/verify-email', async function (req, res) {
+  const email = (req.body.email || '').trim().toLowerCase();
+  const code  = (req.body.code  || '').trim();
+
+  const pending = pendingSignups.get(email);
+  if (!pending || Date.now() > pending.expires) {
+    pendingSignups.delete(email);
+    return res.redirect('/verify-email?email=' + encodeURIComponent(email) + '&error=expired');
+  }
+  if (code !== pending.code) {
+    return res.redirect('/verify-email?email=' + encodeURIComponent(email) + '&error=wrong');
+  }
+
+  try {
+    await dbCreateUser(email, pending.fullname, pending.hash);
+    pendingSignups.delete(email);
+    res.redirect('/login?msg=registered');
+  } catch (e) {
+    console.error('[Verify]', e.message);
+    if (e.message === 'EMAIL_EXISTS') return res.redirect('/signup?error=exists');
+    res.redirect('/verify-email?email=' + encodeURIComponent(email) + '&error=failed');
+  }
+});
+
+
 app.get('/forgot-password', function (req, res) {
   if (req.session && req.session.authenticated) return res.redirect('/');
   const msg = req.query.msg === 'sent'
@@ -233,20 +350,11 @@ app.post('/forgot-password', async function (req, res) {
     const firstName = (user.FULL_NAME || email.split('@')[0]).split(' ')[0];
 
     // Send email via Resend
-    const resendKey = process.env.RESEND_API_KEY;
-    if (resendKey) {
-      await fetch('https://api.resend.com/emails', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + resendKey },
-        body: JSON.stringify({
-          from:    'FLIK Survey Intelligence <onboarding@resend.dev>',
-          to:      [email],
-          subject: 'Reset your FLIK password',
-          html: `
+    await sendEmail(email, 'Reset your FLIK password', `
             <div style="font-family:'DM Sans',sans-serif;max-width:480px;margin:0 auto;padding:40px 24px;background:#FFFEF9;border-radius:16px;">
               <div style="display:flex;align-items:center;gap:12px;margin-bottom:28px;">
-                <div style="width:40px;height:40px;border-radius:10px;background:linear-gradient(135deg,#1B4332,#40916C);display:flex;align-items:center;justify-content:center;">
-                  <span style="color:white;font-size:18px;">F</span>
+                <div style="width:40px;height:40px;border-radius:10px;background:#2D6A4F;display:flex;align-items:center;justify-content:center;">
+                  <span style="color:white;font-size:18px;font-weight:700;">F</span>
                 </div>
                 <div>
                   <div style="font-size:17px;font-weight:700;color:#1B4332;">FLIK Survey Intelligence</div>
@@ -272,13 +380,7 @@ app.post('/forgot-password', async function (req, res) {
               <hr style="border:none;border-top:1px solid #E5E7EB;margin:24px 0;">
               <p style="color:#D1D5DB;font-size:11px;">FLIK Hospitality Group -- Internal Analytics</p>
             </div>
-          `
-        })
-      });
-    } else {
-      // No Resend key — log the link for development
-      console.log('[Password Reset] Link for ' + email + ': ' + resetUrl);
-    }
+          `);
 
     res.redirect('/forgot-password?msg=sent');
   } catch (e) {
