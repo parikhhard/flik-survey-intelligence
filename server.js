@@ -40,31 +40,34 @@ app.use(session({
 // ── In-memory pending signups { email -> { fullname, hash, code, expires } } ──
 const pendingSignups = new Map();
 
-// ── Send email helper ─────────────────────────────────────────────────────────
+// ── Send email helper — uses Brevo (any recipient) or Resend fallback ─────────
 async function sendEmail(to, subject, html) {
-  const apiKey = process.env.RESEND_API_KEY || process.env.BREVO_API_KEY;
-  if (!apiKey) {
-    console.log('[Email] No API key set. To: ' + to + ' Subject: ' + subject);
+  const brevoKey  = process.env.BREVO_API_KEY;
+  const resendKey = process.env.RESEND_API_KEY;
+
+  if (!brevoKey && !resendKey) {
+    console.log('[Email] No email key set. To: ' + to + ' | Subject: ' + subject);
     return;
   }
 
-  // Use Brevo if BREVO_API_KEY is set, otherwise Resend
-  if (process.env.BREVO_API_KEY) {
+  if (brevoKey) {
+    // Brevo — no domain verification needed, sends to any address
     const r = await fetch('https://api.brevo.com/v3/smtp/email', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'api-key': process.env.BREVO_API_KEY },
+      headers: { 'Content-Type': 'application/json', 'api-key': brevoKey },
       body: JSON.stringify({
-        sender:  { name: 'FLIK Survey Intelligence', email: 'noreply@' + ALLOWED_DOMAIN },
-        to:      [{ email: to }],
-        subject: subject,
+        sender:      { name: 'FLIK Survey Intelligence', email: 'noreply@compass-usa.com' },
+        to:          [{ email: to }],
+        subject:     subject,
         htmlContent: html
       })
     });
     if (!r.ok) { const t = await r.text(); throw new Error('Brevo error: ' + t.slice(0, 100)); }
   } else {
+    // Resend fallback — only works for verified addresses on free plan
     const r = await fetch('https://api.resend.com/emails', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + resendKey },
       body: JSON.stringify({ from: 'FLIK Survey Intelligence <onboarding@resend.dev>', to: [to], subject, html })
     });
     if (!r.ok) { const t = await r.text(); throw new Error('Resend error: ' + t.slice(0, 100)); }
