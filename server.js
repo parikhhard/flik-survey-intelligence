@@ -42,19 +42,32 @@ const pendingSignups = new Map();
 
 // ── Send email helper ─────────────────────────────────────────────────────────
 async function sendEmail(to, subject, html) {
-  const resendKey = process.env.RESEND_API_KEY;
-  if (!resendKey) {
-    console.log('[Email] No RESEND_API_KEY set. Would send to ' + to + ': ' + subject);
+  const apiKey = process.env.RESEND_API_KEY || process.env.BREVO_API_KEY;
+  if (!apiKey) {
+    console.log('[Email] No API key set. To: ' + to + ' Subject: ' + subject);
     return;
   }
-  const r = await fetch('https://api.resend.com/emails', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + resendKey },
-    body: JSON.stringify({ from: 'FLIK Survey Intelligence <onboarding@resend.dev>', to: [to], subject, html })
-  });
-  if (!r.ok) {
-    const t = await r.text();
-    throw new Error('Resend error: ' + t.slice(0, 100));
+
+  // Use Brevo if BREVO_API_KEY is set, otherwise Resend
+  if (process.env.BREVO_API_KEY) {
+    const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'api-key': process.env.BREVO_API_KEY },
+      body: JSON.stringify({
+        sender:  { name: 'FLIK Survey Intelligence', email: 'noreply@' + ALLOWED_DOMAIN },
+        to:      [{ email: to }],
+        subject: subject,
+        htmlContent: html
+      })
+    });
+    if (!r.ok) { const t = await r.text(); throw new Error('Brevo error: ' + t.slice(0, 100)); }
+  } else {
+    const r = await fetch('https://api.resend.com/emails', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+      body: JSON.stringify({ from: 'FLIK Survey Intelligence <onboarding@resend.dev>', to: [to], subject, html })
+    });
+    if (!r.ok) { const t = await r.text(); throw new Error('Resend error: ' + t.slice(0, 100)); }
   }
 }
 
