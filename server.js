@@ -351,6 +351,7 @@ app.get('/forgot-password', function (req, res) {
 
 app.post('/forgot-password', async function (req, res) {
   const email = (req.body.email || '').trim().toLowerCase();
+  console.log('[Forgot Password] email:', email, '| brevo:', !!process.env.BREVO_API_KEY, '| resend:', !!process.env.RESEND_API_KEY);
   if (!email) return res.redirect('/forgot-password');
 
   try {
