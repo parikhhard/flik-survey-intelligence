@@ -42,7 +42,6 @@ const pendingSignups = new Map();
 
 // ── Send email helper — uses Brevo (any recipient) or Resend fallback ─────────
 async function sendEmail(to, subject, html) {
-  console.log('[Email] Sending to:', to, '| Brevo key set:', !!process.env.BREVO_API_KEY, '| Resend key set:', !!process.env.RESEND_API_KEY);
   const brevoKey  = process.env.BREVO_API_KEY;
   const resendKey = process.env.RESEND_API_KEY;
 
@@ -57,7 +56,7 @@ async function sendEmail(to, subject, html) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': brevoKey },
       body: JSON.stringify({
-        sender: { name: 'FLIK Survey Intelligence', email: 'hard.parikh@compass-usa.com' },
+        sender:      { name: 'FLIK Survey Intelligence', email: 'noreply@compass-usa.com' },
         to:          [{ email: to }],
         subject:     subject,
         htmlContent: html
@@ -568,7 +567,7 @@ function dbCreateUser(email, fullname, hash) {
 app.get('/api/survey-data', requireAuth, function (req, res) {
   const sql = [
     'SELECT RESPONSE_ID, UNIT_SAP_NUMBER,',
-    '  UNIT AS UNIT_NAME, ANALYTICS_QUESTION_TEXT, CSAT, CSAT_REASON',
+    '  UNIT AS UNIT_NAME, QUESTION_MAPPING_CLEANSED_QUESTION AS ANALYTICS_QUESTION_TEXT, CSAT, CSAT_REASON',
     'FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES',
     'WHERE CSAT_REASON IS NOT NULL AND CSAT IS NOT NULL',
     'ORDER BY UNIT_SAP_NUMBER'
