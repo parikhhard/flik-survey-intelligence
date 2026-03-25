@@ -56,7 +56,7 @@ async function sendEmail(to, subject, html) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': brevoKey },
       body: JSON.stringify({
-        sender:      { name: 'FLIK Survey Intelligence', email: 'noreply@compass-usa.com' },
+        sender:      { name: 'FLIK Survey Intelligence', email: 'hard.parikh@compass-usa.com' },
         to:          [{ email: to }],
         subject:     subject,
         htmlContent: html
