@@ -858,10 +858,42 @@ function isBadReply(s, stopReason) {
 }
 
 // Server-side prompt cache hash -- avoids resending large system prompt every turn
+
+// -- RAG -- Push analytics to Snowflake UNIT_ANALYTICS table -------------------
+function refreshAnalyticsForRAG() {
+  if (!customData || !DATA || DATA.length === 0) return;
+  var a = runAnalytics();
+  if (!a || !a.unitStats || a.unitStats.length === 0) return;
+
+  fetch('/api/refresh-analytics', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      unitStats:      a.unitStats,
+      portfolioStats: {
+        totalRows:         a.totalRows,
+        uniqueResponses:   a.uniqueResponses,
+        uniqueUnits:       a.uniqueUnits,
+        gMean:             a.gMean,
+        rankable:          a.rankable
+      }
+    })
+  }).then(function(r) {
+    return r.json().then(function(d) {
+      if (d.ok) {
+        console.log('[RAG] Analytics indexed for ' + d.units + ' units');
+      }
+    });
+  }).catch(function(e) {
+    console.warn('[RAG] Analytics refresh failed (non-critical):', e.message);
+  });
+}
+
 var _promptHash = null;
 
-function callAPI(messages, systemPrompt, onSuccess, onError) {
-  var body = { messages: messages };
+function callAPI(messages, systemPrompt, onSuccess, onError, userQuery) {
+  var body = { messages: messages, useRag: true };
+  if (userQuery) body.userQuery = userQuery;
   // Use cached hash if available, otherwise send full system prompt
   if (_promptHash) {
     body.promptHash = _promptHash;
@@ -1066,6 +1098,7 @@ fetch('/api/survey-data').then(function(r){
   var nb2 = document.getElementById('notice-bar');
   if (nb2) nb2.style.display = 'none';
   addBotMsg('Live data loaded: ' + DATA.length.toLocaleString() + ' rows from Snowflake. What would you like to analyse?');
+  refreshAnalyticsForRAG();
 }).catch(function(e){
   var nb3 = document.getElementById('notice-bar');
   if (nb3) { nb3.style.display = 'flex'; nb3.textContent = 'Could not load Snowflake data: ' + e.message; }

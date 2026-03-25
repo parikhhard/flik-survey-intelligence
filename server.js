@@ -56,7 +56,7 @@ async function sendEmail(to, subject, html) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': brevoKey },
       body: JSON.stringify({
-        sender:      { name: 'FLIK Survey Intelligence', email: 'hard.parikh@compass-usa.com' },
+        sender:      { name: 'FLIK Survey Intelligence', email: 'noreply@compass-usa.com' },
         to:          [{ email: to }],
         subject:     subject,
         htmlContent: html
@@ -351,7 +351,6 @@ app.get('/forgot-password', function (req, res) {
 
 app.post('/forgot-password', async function (req, res) {
   const email = (req.body.email || '').trim().toLowerCase();
-  console.log('[Forgot Password] email:', email, '| brevo:', !!process.env.BREVO_API_KEY, '| resend:', !!process.env.RESEND_API_KEY);
   if (!email) return res.redirect('/forgot-password');
 
   try {
@@ -591,33 +590,212 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
   });
 });
 
-// ── AI — Snowflake Cortex ─────────────────────────────────────────────────────
+// ── RAG — Search relevant units via Cortex Search REST API ───────────────────
+function searchUnits(query, limit, callback) {
+  // Cortex Search REST API endpoint
+  const account  = (process.env.SNOWFLAKE_ACCOUNT || 'uya38094.us-east-1.snowflakecomputing.com')
+    .replace('.snowflakecomputing.com', '');
+  const url = 'https://' + account + '.snowflakecomputing.com/api/v2/cortex/search-services/' +
+    'FLIK_ANALYTICS.CURIOSITY_WIDGETS.UNIT_SEARCH:query';
+
+  // Build JWT token for auth
+  let token;
+  try {
+    const pk = crypto.createPrivateKey({ key: process.env.SNOWFLAKE_PRIVATE_KEY, format: 'pem' });
+    const now = Math.floor(Date.now() / 1000);
+    const header  = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+    const payload = Buffer.from(JSON.stringify({
+      iss: account.toUpperCase() + '.' + (process.env.SNOWFLAKE_USERNAME || 'PARIKH01_SRV').toUpperCase() + '.SHA256:' +
+        crypto.createPublicKey(pk).export({ type: 'spki', format: 'der' }).toString('base64'),
+      sub: account.toUpperCase() + '.' + (process.env.SNOWFLAKE_USERNAME || 'PARIKH01_SRV').toUpperCase(),
+      iat: now,
+      exp: now + 3600
+    })).toString('base64url');
+    const sig = crypto.sign('SHA256', Buffer.from(header + '.' + payload), { key: pk, padding: crypto.constants.RSA_PKCS1_PADDING });
+    token = header + '.' + payload + '.' + sig.toString('base64url');
+  } catch (e) {
+    console.error('[RAG] JWT error:', e.message);
+    return callback(null, []); // Fall back gracefully
+  }
+
+  fetch(url, {
+    method:  'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': 'Bearer ' + token,
+      'X-Snowflake-Authorization-Token-Type': 'KEYPAIR_JWT'
+    },
+    body: JSON.stringify({
+      query:       query,
+      columns:     ['UNIT_KEY', 'UNIT_NAME', 'UNIT_SAP', 'WEIGHTED_SCORE', 'RAW_AVG',
+                    'RESPONSES', 'NEG_RATE', 'CONFIDENCE', 'TOP_ISSUES', 'PERFORMANCE_TIER', 'SEARCH_TEXT'],
+      limit:       limit || 15
+    })
+  }).then(function (r) {
+    return r.json().then(function (d) {
+      if (!r.ok) {
+        console.warn('[RAG] Search failed:', JSON.stringify(d).slice(0, 100));
+        return callback(null, []); // Fall back gracefully
+      }
+      callback(null, d.results || []);
+    });
+  }).catch(function (e) {
+    console.warn('[RAG] Fetch error:', e.message);
+    callback(null, []); // Fall back gracefully
+  });
+}
+
+// ── Populate UNIT_ANALYTICS from computed stats ───────────────────────────────
+app.post('/api/refresh-analytics', requireAuth, function (req, res) {
+  const { unitStats, portfolioStats } = req.body;
+  if (!unitStats || !Array.isArray(unitStats) || !unitStats.length) {
+    return res.status(400).json({ error: 'unitStats required.' });
+  }
+
+  console.log('[RAG] Refreshing analytics for ' + unitStats.length + ' units...');
+
+  // Build MERGE SQL to upsert all unit analytics
+  const values = unitStats.map(function (u) {
+    const key    = (u.key        || '').replace(/'/g, "''").slice(0, 254);
+    const name   = (u.name       || '').replace(/'/g, "''").slice(0, 499);
+    const sap    = (u.sap        || '').replace(/'/g, "''").slice(0, 99);
+    const issues = (u.topReasons || []).slice(0, 10)
+      .map(function (r) { return r[0] + '(' + r[1] + ')'; }).join(', ');
+    const tier   = u.wScore >= 4 ? 'Thriving' : u.wScore >= 3 ? 'Neutral' : 'At-Risk';
+
+    // Rich search text — this is what Cortex Search indexes
+    const searchText = [
+      'Unit: ' + name,
+      'SAP: ' + sap,
+      'Performance: ' + tier,
+      'Weighted CSAT score: ' + u.wScore + ' out of 5',
+      'Raw average: ' + u.rawAvg,
+      'Response count: ' + u.responses,
+      'Confidence: ' + u.conf.label,
+      'Negative rate: ' + u.negRate + '%',
+      'NPS: ' + u.nps,
+      'Top issues: ' + issues
+    ].join('. ');
+
+    return "('" + key + "','" + name + "','" + sap + "'," +
+      u.responses + ',' + u.rawAvg + ',' + u.wScore + ',' +
+      u.negRate + ',' + u.posRate + ',' + u.nps + ",'" +
+      u.conf.label + "','" + issues.replace(/'/g, "''") + "','" +
+      tier + "','" + searchText.replace(/'/g, "''") + "',CURRENT_TIMESTAMP())";
+  }).join(',\n');
+
+  const sql = `
+    CREATE TABLE IF NOT EXISTS FLIK_ANALYTICS.CURIOSITY_WIDGETS.UNIT_ANALYTICS (
+      UNIT_KEY         VARCHAR(255) PRIMARY KEY,
+      UNIT_NAME        VARCHAR(500),
+      UNIT_SAP         VARCHAR(100),
+      RESPONSES        NUMBER,
+      RAW_AVG          FLOAT,
+      WEIGHTED_SCORE   FLOAT,
+      NEG_RATE         FLOAT,
+      POS_RATE         FLOAT,
+      NPS              NUMBER,
+      CONFIDENCE       VARCHAR(50),
+      TOP_ISSUES       VARCHAR(2000),
+      PERFORMANCE_TIER VARCHAR(50),
+      SEARCH_TEXT      VARCHAR(5000),
+      LAST_UPDATED     TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+    )
+  `;
+
+  sfQuery(sql, function (err) {
+    if (err) { console.error('[RAG] Create table error:', err.message); return res.status(500).json({ error: err.message }); }
+
+    const mergeSql = `
+      MERGE INTO FLIK_ANALYTICS.CURIOSITY_WIDGETS.UNIT_ANALYTICS AS t
+      USING (SELECT * FROM VALUES ${values}
+        AS v(UNIT_KEY, UNIT_NAME, UNIT_SAP, RESPONSES, RAW_AVG, WEIGHTED_SCORE,
+             NEG_RATE, POS_RATE, NPS, CONFIDENCE, TOP_ISSUES, PERFORMANCE_TIER, SEARCH_TEXT, LAST_UPDATED)
+      ) AS s ON t.UNIT_KEY = s.UNIT_KEY
+      WHEN MATCHED THEN UPDATE SET
+        UNIT_NAME = s.UNIT_NAME, UNIT_SAP = s.UNIT_SAP, RESPONSES = s.RESPONSES,
+        RAW_AVG = s.RAW_AVG, WEIGHTED_SCORE = s.WEIGHTED_SCORE, NEG_RATE = s.NEG_RATE,
+        POS_RATE = s.POS_RATE, NPS = s.NPS, CONFIDENCE = s.CONFIDENCE,
+        TOP_ISSUES = s.TOP_ISSUES, PERFORMANCE_TIER = s.PERFORMANCE_TIER,
+        SEARCH_TEXT = s.SEARCH_TEXT, LAST_UPDATED = s.LAST_UPDATED
+      WHEN NOT MATCHED THEN INSERT
+        (UNIT_KEY, UNIT_NAME, UNIT_SAP, RESPONSES, RAW_AVG, WEIGHTED_SCORE,
+         NEG_RATE, POS_RATE, NPS, CONFIDENCE, TOP_ISSUES, PERFORMANCE_TIER, SEARCH_TEXT, LAST_UPDATED)
+      VALUES
+        (s.UNIT_KEY, s.UNIT_NAME, s.UNIT_SAP, s.RESPONSES, s.RAW_AVG, s.WEIGHTED_SCORE,
+         s.NEG_RATE, s.POS_RATE, s.NPS, s.CONFIDENCE, s.TOP_ISSUES, s.PERFORMANCE_TIER,
+         s.SEARCH_TEXT, s.LAST_UPDATED)
+    `;
+
+    sfQuery(mergeSql, function (mergeErr) {
+      if (mergeErr) { console.error('[RAG] Merge error:', mergeErr.message); return res.status(500).json({ error: mergeErr.message }); }
+      console.log('[RAG] Analytics refreshed for ' + unitStats.length + ' units.');
+      res.json({ ok: true, units: unitStats.length });
+    });
+  });
+});
+
+// ── AI — Snowflake Cortex with RAG ────────────────────────────────────────────
 app.post('/api/chat', requireAuth, function (req, res) {
-  const { system, messages } = req.body;
+  const { system, messages, userQuery, portfolioStats, useRag } = req.body;
   if (!messages || !Array.isArray(messages) || !messages.length) {
     return res.status(400).json({ error: 'messages array required.' });
   }
 
-  const systemTrunc = (system || '').slice(0, 6000);
-  const recentMsgs  = messages.slice(-3);
+  function buildAndCallCortex(ragUnits) {
+    // Merge RAG results into system prompt if available
+    let systemFinal = (system || '').slice(0, 4000);
 
-  let conversation = systemTrunc + '\n\n';
-  recentMsgs.forEach(function (m) {
-    conversation += m.role.toUpperCase() + ': ' + (m.content || '').slice(0, 1000) + '\n\n';
-  });
-  conversation += 'ASSISTANT:';
-
-  const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
-  const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-6', '" + escaped + "') AS RESPONSE";
-
-  sfQuery(sql, function (queryErr, rows) {
-    if (queryErr) {
-      console.error('[Cortex]', queryErr.message);
-      return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
+    if (ragUnits && ragUnits.length > 0) {
+      const ragSection = '\n\n## RETRIEVED UNITS (most relevant to this question)\n' +
+        ragUnits.map(function (u) {
+          return (u.PERFORMANCE_TIER === 'At-Risk' ? '[AT-RISK]' : '') +
+            u.UNIT_NAME + '|' + u.UNIT_SAP + '|n:' + u.RESPONSES +
+            '|wtd:' + u.WEIGHTED_SCORE + '|neg:' + u.NEG_RATE + '%|' +
+            u.CONFIDENCE + '|' + u.TOP_ISSUES;
+        }).join('\n');
+      systemFinal = systemFinal + ragSection;
     }
-    const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
-    res.json({ content: [{ type: 'text', text: text }], stop_reason: 'end_turn', _provider: 'snowflake-cortex' });
-  });
+
+    const recentMsgs = messages.slice(-3);
+    let conversation = systemFinal + '\n\n';
+    recentMsgs.forEach(function (m) {
+      conversation += m.role.toUpperCase() + ': ' + (m.content || '').slice(0, 1000) + '\n\n';
+    });
+    conversation += 'ASSISTANT:';
+
+    const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
+    const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-6', '" + escaped + "') AS RESPONSE";
+
+    sfQuery(sql, function (queryErr, rows) {
+      if (queryErr) {
+        console.error('[Cortex]', queryErr.message);
+        return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
+      }
+      const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
+      res.json({
+        content:     [{ type: 'text', text: text }],
+        stop_reason: 'end_turn',
+        _provider:   'snowflake-cortex',
+        _ragUnits:   ragUnits ? ragUnits.length : 0
+      });
+    });
+  }
+
+  // Use RAG if enabled and query provided
+  if (useRag && userQuery) {
+    searchUnits(userQuery, 15, function (err, ragUnits) {
+      if (err || !ragUnits || !ragUnits.length) {
+        console.log('[RAG] No results or error, falling back to standard prompt');
+        buildAndCallCortex([]);
+      } else {
+        console.log('[RAG] Retrieved ' + ragUnits.length + ' relevant units for: ' + userQuery.slice(0, 50));
+        buildAndCallCortex(ragUnits);
+      }
+    });
+  } else {
+    buildAndCallCortex([]);
+  }
 });
 
 // ── Static + frontend ─────────────────────────────────────────────────────────
