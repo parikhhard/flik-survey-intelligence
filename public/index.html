@@ -285,6 +285,7 @@ function confTier(n) {
 
 function runAnalytics() {
   var units = {}, reasons = {}, allScores = [], allRids = {}, qMap = {};
+  var allDates = [];
   for (var ri = 0; ri < DATA.length; ri++) {
     var r = DATA[ri];
     var sc = parseFloat(r.csat);
@@ -292,14 +293,23 @@ function runAnalytics() {
     var qt = (r.analytics_question_text || '').trim();
     var sap = r.unit_sap_number;
     var uName = (r.unit || '').trim();
+    var auditDate = (r.audit_date || '').trim();
     var key = (sap && sap !== 0 && String(sap) !== '0') ? String(sap) : (uName || 'Unknown');
     var dName = uName || (sap && sap !== 0 ? 'SAP-' + sap : 'Unknown');
-    if (!units[key]) { units[key] = {name:dName, sap:(sap && sap !== 0 ? sap : null), scores:[], reasons:[], rids:{}, rows:0}; }
+    if (!units[key]) { units[key] = {name:dName, sap:(sap && sap !== 0 ? sap : null), scores:[], reasons:[], rids:{}, rows:0, dates:[], scoresByDate:[]}; }
     else if (uName && (units[key].name.indexOf('SAP-') === 0 || !units[key].name)) { units[key].name = uName; }
     units[key].rows++;
     var rid = (r.response_id || '').trim();
     if (rid && rid !== '0') { units[key].rids[rid] = 1; allRids[rid] = 1; }
-    if (!isNaN(sc) && sc > 0) { units[key].scores.push(sc); allScores.push(sc); }
+    if (!isNaN(sc) && sc > 0) {
+      units[key].scores.push(sc);
+      allScores.push(sc);
+      if (auditDate) {
+        units[key].scoresByDate.push({date:auditDate, score:sc});
+        allDates.push(auditDate);
+      }
+    }
+    if (auditDate) units[key].dates.push(auditDate);
     if (reason) { units[key].reasons.push(reason); reasons[reason] = (reasons[reason] || 0) + 1; }
     if (qt) {
       var sq = qt.slice(0, 65);
@@ -330,13 +340,19 @@ function runAnalytics() {
     for (var rri = 0; rri < u.reasons.length; rri++) { rc[u.reasons[rri]] = (rc[u.reasons[rri]] || 0) + 1; }
     var topReasons = Object.keys(rc).map(function(r){return [r,rc[r]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,10);
     var conf = confTier(n);
+    // Date range for this unit
+    var sortedDates = u.dates.slice().sort();
+    var minDate = sortedDates.length ? sortedDates[0] : '';
+    var maxDate = sortedDates.length ? sortedDates[sortedDates.length-1] : '';
     unitStats.push({
       key:k, name:u.name, sap:u.sap,
       rawAvg:+rawAvg.toFixed(2), wScore:+wScore.toFixed(2),
       responses:n, totalRows:u.rows,
       negRate:pct(negC,total), posRate:pct(posC,total), nps:nps,
       topReasons:topReasons, conf:conf,
-      rankable:n >= MIN_RANK, reliable:n >= MIN_RELIABLE
+      rankable:n >= MIN_RANK, reliable:n >= MIN_RELIABLE,
+      minDate:minDate, maxDate:maxDate,
+      scoresByDate:u.scoresByDate
     });
   }
   unitStats.sort(function(a,b){return b.wScore - a.wScore;});
@@ -352,6 +368,7 @@ function runAnalytics() {
     if (qavg !== null) { qStats.push({q:qk, n:qn, avg:+qavg.toFixed(2), wAvg:+qwavg.toFixed(2)}); }
   }
   qStats.sort(function(a,b){return a.wAvg - b.wAvg;});
+  var allDatesSorted = allDates.slice().sort();
   return {
     unitStats:unitStats, gMean:+gMean.toFixed(2),
     topReasons:topReasons, qStats:qStats,
@@ -359,7 +376,10 @@ function runAnalytics() {
     uniqueResponses:Object.keys(allRids).length || DATA.length,
     uniqueUnits:Object.keys(units).length,
     rankable:unitStats.filter(function(u){return u.rankable;}).length,
-    reliable:unitStats.filter(function(u){return u.reliable;}).length
+    reliable:unitStats.filter(function(u){return u.reliable;}).length,
+    minDate:allDatesSorted.length ? allDatesSorted[0] : '',
+    maxDate:allDatesSorted.length ? allDatesSorted[allDatesSorted.length-1] : '',
+    hasDateData:allDatesSorted.length > 0
   };
 }
 
@@ -514,52 +534,74 @@ function handleCSV(input) {
   input.value = '';
 }
 
+// Classify query intent - determines what visuals to show
+function classifyQuery(q) {
+  var ql = q.toLowerCase();
+  var hasUnit   = !!findUnit(q, runAnalytics().unitStats);
+  var isDeep    = hasUnit || /deep.?dive|tell me about|how is|analysis for/.test(ql);
+  var isRank    = !hasUnit && /rank|ranking|compar|best unit|worst unit|top unit|bottom unit|all unit|list unit|show unit|table of unit/.test(ql);
+  var isIssue   = !hasUnit && /complaint|reason|issue|problem|categor|feedback|what are people|common/.test(ql);
+  var isHealth  = !hasUnit && /health|portfolio|overview|executive|summary|dashboard|how many thriv|how many at.risk/.test(ql);
+  var isDate    = /date|week|month|year|trend|over time|change|spike|decline|when|recent|last \d|since|period|2024|2025|2026/.test(ql);
+  var isConversational = /why|explain|what does|what is|how does|tell me|describe|what happened|can you|should i|what should/.test(ql);
+  // Pure conversational questions don't need charts
+  if (isConversational && !isDeep && !isRank && !isHealth) return {type:'conversational', hasUnit:hasUnit, isDate:isDate};
+  if (isDeep)   return {type:'unit',    hasUnit:hasUnit, isDate:isDate};
+  if (isRank)   return {type:'ranking', hasUnit:false,   isDate:isDate};
+  if (isIssue)  return {type:'issues',  hasUnit:false,   isDate:isDate};
+  if (isHealth) return {type:'health',  hasUnit:false,   isDate:isDate};
+  return        {type:'health',  hasUnit:false,   isDate:isDate};
+}
+
 function buildVisuals(query, a) {
   pendingCharts = []; pendingTables = [];
-  var q = query.toLowerCase();
-  var targetUnit = findUnit(query, a.unitStats);
+  var intent = classifyQuery(query);
 
-  if (targetUnit || /deep.?dive|unit.anal/.test(q)) {
-    var u2 = targetUnit || a.unitStats[0];
-    if (u2.topReasons.length) {
-      pendingCharts.push({title:'Feedback Reasons - ' + u2.name, type:'doughnut',
-        labels:u2.topReasons.map(function(x){return x[0];}),
-        datasets:[{label:'Mentions', data:u2.topReasons.map(function(x){return x[1];}),
-          colors:['#E76F51','#F4A261','#E9C46A','#52B788','#60A5FA','#A78BFA','#95D5B2','#1B4332','#34D399','#FB923C']}]
+  // No visuals for conversational/follow-up questions
+  if (intent.type === 'conversational') return;
+
+  // Unit deep-dive
+  if (intent.type === 'unit') {
+    var tu = findUnit(query, a.unitStats) || a.unitStats[0];
+    if (!tu) return;
+    if (tu.topReasons.length >= 2) {
+      pendingCharts.push({title:'Feedback Breakdown - ' + tu.name, type:'doughnut',
+        labels: tu.topReasons.slice(0,8).map(function(x){return x[0];}),
+        datasets:[{label:'Mentions', data:tu.topReasons.slice(0,8).map(function(x){return x[1];}),
+          colors:['#E76F51','#F4A261','#E9C46A','#52B788','#60A5FA','#A78BFA','#95D5B2','#1B4332']}]
       });
     }
-    pendingCharts.push({title:u2.name + ' Score vs Portfolio Average', type:'bar',
+    pendingCharts.push({title:tu.name + ' vs Portfolio', type:'bar',
       labels:['Raw CSAT','Weighted Score','Portfolio Mean'],
-      datasets:[{label:'Score /5', data:[u2.rawAvg, u2.wScore, a.gMean],
-        colors:[u2.rawAvg >= a.gMean ? '#40916C':'#E76F51', u2.wScore >= a.gMean ? '#2D6A4F':'#E76F51', '#E9C46A']}]
+      datasets:[{label:'Score /5', data:[tu.rawAvg, tu.wScore, a.gMean],
+        colors:[tu.rawAvg >= a.gMean ? '#40916C':'#E76F51', tu.wScore >= a.gMean ? '#2D6A4F':'#E76F51','#E9C46A']}]
     });
-    var tot = u2.topReasons.reduce(function(s,x){return s+x[1];},0);
-    pendingTables.push({title:'Issue Breakdown - ' + u2.name + ' (n=' + u2.responses + ', ' + u2.conf.label + ' confidence)',
+    var tot = tu.topReasons.reduce(function(s,x){return s+x[1];},0);
+    pendingTables.push({
+      title:'Issue Breakdown - ' + tu.name + ' (n=' + tu.responses + ', ' + tu.conf.label + ' confidence)',
       headers:['Feedback Category','Mentions','% of Feedback'], scoreCol:-1,
-      rows:u2.topReasons.map(function(x){return [x[0], x[1], tot ? (x[1]/tot*100).toFixed(1)+'%' : '-'];})
+      rows:tu.topReasons.map(function(x){return [x[0], x[1], tot?(x[1]/tot*100).toFixed(1)+'%':'-'];})
     });
     return;
   }
 
-  if (/rank|compar|best|worst|top|bottom|perform|all unit/.test(q)) {
-    var rankable = a.unitStats.filter(function(u){return u.rankable;}).slice(0,30);
+  // Rankings - table only, no chart for every single unit (too cluttered)
+  if (intent.type === 'ranking') {
+    var rankable = a.unitStats.filter(function(u){return u.rankable;});
     var excl = a.unitStats.filter(function(u){return !u.rankable;}).length;
-    var rLabels = rankable.map(function(u){return u.name.length>30?u.name.slice(0,28)+'..':u.name;});
-    pendingCharts.push({title:'Weighted CSAT by Unit - ' + rankable.length + ' rankable units', type:'horizontalBar',
-      labels:rLabels,
-      datasets:[
-        {label:'Weighted Score', data:rankable.map(function(u){return u.wScore;}),
-          colors:rankable.map(function(u){return u.wScore>=4?'#2D6A4F':u.wScore>=3?'#E9C46A':'#E76F51';})},
-        {label:'Portfolio Mean', data:rankable.map(function(){return a.gMean;}),
-          colors:rankable.map(function(){return 'rgba(233,196,106,0.5)';})}
-      ]
+    // Chart for top 20 only - not all 300+ units
+    var chartUnits = rankable.slice(0, 20);
+    pendingCharts.push({title:'Top 20 Units by Weighted CSAT', type:'horizontalBar',
+      labels: chartUnits.map(function(u){return u.name.length>28?u.name.slice(0,26)+'..':u.name;}),
+      datasets:[{label:'Weighted Score', data:chartUnits.map(function(u){return u.wScore;}),
+        colors:chartUnits.map(function(u){return u.wScore>=4?'#2D6A4F':u.wScore>=3?'#E9C46A':'#E76F51';})}]
     });
     pendingTables.push({
-      title:'Unit Performance Ranking' + (excl ? ' (' + excl + ' units excluded - insufficient data)' : ''),
+      title:'Full Unit Performance Ranking' + (excl?' ('+excl+' excluded: n<'+MIN_RANK+')':''),
       headers:['#','Unit','SAP','Responses','Raw Avg','Wtd Score','Neg%','NPS','Confidence'],
       scoreCol:5,
       rows:rankable.map(function(u,i){return [
-        i+1, u.name.length>28?u.name.slice(0,26)+'..':u.name,
+        i+1, u.name.length>30?u.name.slice(0,28)+'..':u.name,
         u.sap||'-', u.responses, u.rawAvg, u.wScore,
         u.negRate+'%', (u.nps>0?'+':'')+u.nps, u.conf.label
       ];})
@@ -567,10 +609,11 @@ function buildVisuals(query, a) {
     return;
   }
 
-  if (/complaint|reason|issue|problem|categor/.test(q)) {
+  // Issues/complaints
+  if (intent.type === 'issues') {
     var top = a.topReasons.slice(0,15);
     var total = top.reduce(function(s,x){return s+x[1];},0);
-    pendingCharts.push({title:'Top Feedback Categories - All Units', type:'bar',
+    pendingCharts.push({title:'Top Feedback Categories - Portfolio Wide', type:'bar',
       labels:top.map(function(x){return x[0].length>22?x[0].slice(0,20)+'..':x[0];}),
       datasets:[{label:'Mentions', data:top.map(function(x){return x[1];}),
         colors:top.map(function(_,i){return PAL[i%PAL.length];})}]
@@ -582,24 +625,18 @@ function buildVisuals(query, a) {
     return;
   }
 
-  // Default: executive summary
+  // Portfolio health / executive summary / default
   var tG = 0, tN = 0, tR = 0;
   for (var ii = 0; ii < a.unitStats.length; ii++) {
     var ws = a.unitStats[ii].wScore;
     if (ws >= 4) tG++; else if (ws >= 3) tN++; else tR++;
   }
-  pendingCharts.push({title:'Portfolio Health - ' + a.uniqueUnits + ' Units (Weighted Scores)', type:'doughnut',
-    labels:['Thriving (4+)','Neutral (3-3.9)','At-Risk (<3)'],
+  pendingCharts.push({title:'Portfolio Health Distribution', type:'doughnut',
+    labels:['Thriving (4.0+)','Neutral (3.0-3.9)','At-Risk (<3.0)'],
     datasets:[{label:'Units', data:[tG,tN,tR], colors:['#40916C','#E9C46A','#E76F51']}]
   });
-  var top15 = a.unitStats.slice(0, Math.min(15, a.unitStats.length));
-  pendingCharts.push({title:'Top ' + top15.length + ' Units by Weighted CSAT', type:'horizontalBar',
-    labels:top15.map(function(u){return u.name.length>30?u.name.slice(0,28)+'..':u.name;}),
-    datasets:[{label:'Weighted Score', data:top15.map(function(u){return u.wScore;}),
-      colors:top15.map(function(u){return u.wScore>=4?'#2D6A4F':u.wScore>=3?'#E9C46A':'#E76F51';})}]
-  });
   var top8R = a.topReasons.slice(0,8);
-  pendingCharts.push({title:'Top 8 Feedback Categories', type:'bar',
+  pendingCharts.push({title:'Top 8 Portfolio-Wide Issues', type:'bar',
     labels:top8R.map(function(x){return x[0].length>20?x[0].slice(0,18)+'..':x[0];}),
     datasets:[{label:'Mentions', data:top8R.map(function(x){return x[1];}),
       colors:['#E76F51','#F4A261','#E9C46A','#52B788','#60A5FA','#A78BFA','#95D5B2','#2D6A4F']}]
@@ -607,12 +644,12 @@ function buildVisuals(query, a) {
   var rbl = a.unitStats.filter(function(u){return u.rankable;}).slice(0,25);
   var exN = a.unitStats.filter(function(u){return !u.rankable;}).length;
   pendingTables.push({
-    title:'Unit Summary - ' + rbl.length + ' rankable units' + (exN?' ('+exN+' excluded: n<'+MIN_RANK+')':''),
-    headers:['Unit','SAP','Responses','Raw Avg','Wtd Score','Neg%','NPS','Health','Confidence'],
-    scoreCol:4,
+    title:'Unit Summary' + (exN?' ('+exN+' excluded: n<'+MIN_RANK+')':''),
+    headers:['Unit','SAP','Responses','Wtd Score','Neg%','NPS','Health','Confidence'],
+    scoreCol:3,
     rows:rbl.map(function(u){return [
       u.name.length>30?u.name.slice(0,28)+'..':u.name,
-      u.sap||'-', u.responses, u.rawAvg, u.wScore,
+      u.sap||'-', u.responses, u.wScore,
       u.negRate+'%', (u.nps>0?'+':'')+u.nps,
       u.wScore>=4?'Thriving':u.wScore>=3?'Neutral':'At-Risk',
       u.conf.label
@@ -754,73 +791,170 @@ function findUnit(query, unitStats) {
   return null;
 }
 
+function parseDateRange(query) {
+  var q = query.toLowerCase();
+  var now = new Date();
+  var today = now.toISOString().slice(0,10);
+  var start = null, end = today, label = '';
+  var m;
+  if ((m = q.match(/last\s+(\d+)\s+(day|week|month|year)/))) {
+    var n = parseInt(m[1]), unit = m[2], d = new Date();
+    if (unit==='day')   d.setDate(d.getDate()-n);
+    if (unit==='week')  d.setDate(d.getDate()-n*7);
+    if (unit==='month') d.setMonth(d.getMonth()-n);
+    if (unit==='year')  d.setFullYear(d.getFullYear()-n);
+    start=d.toISOString().slice(0,10); label='last '+n+' '+unit+(n>1?'s':'');
+  } else if (/last\s+week/.test(q))  { var d2=new Date(); d2.setDate(d2.getDate()-7); start=d2.toISOString().slice(0,10); label='last 7 days'; }
+  else if (/last\s+month/.test(q))   { var d3=new Date(); d3.setMonth(d3.getMonth()-1); start=d3.toISOString().slice(0,10); label='last 30 days'; }
+  else if (/last\s+year/.test(q))    { var d4=new Date(); d4.setFullYear(d4.getFullYear()-1); start=d4.toISOString().slice(0,10); label='last 12 months'; }
+  else if (/this\s+month/.test(q))   { start=today.slice(0,7)+'-01'; label='this month'; }
+  else if (/this\s+year|ytd/.test(q)) { start=today.slice(0,4)+'-01-01'; label='year to date'; }
+  else if ((m = q.match(/\b(202[0-9])\b/))) { start=m[1]+'-01-01'; end=m[1]+'-12-31'; label='year '+m[1]; }
+  else if ((m = q.match(/past\s+(\d+)\s+(day|week|month)/))) {
+    var n2=parseInt(m[1]), unit2=m[2], d5=new Date();
+    if (unit2==='day')  d5.setDate(d5.getDate()-n2);
+    if (unit2==='week') d5.setDate(d5.getDate()-n2*7);
+    if (unit2==='month') d5.setMonth(d5.getMonth()-n2);
+    start=d5.toISOString().slice(0,10); label='past '+n2+' '+unit2+(n2>1?'s':'');
+  }
+  return start ? {start:start, end:end, label:label} : null;
+}
+
+function computeDateStats(unit, startDate, endDate) {
+  if (!unit.scoresByDate || !unit.scoresByDate.length) return null;
+  var filtered = unit.scoresByDate.filter(function(s) {
+    return (!startDate || s.date >= startDate) && (!endDate || s.date <= endDate);
+  });
+  if (!filtered.length) return null;
+  var scores = filtered.map(function(s){return s.score;});
+  var avg = scores.reduce(function(a,b){return a+b;},0) / scores.length;
+  var neg = scores.filter(function(s){return s < 3;}).length;
+  return { n:scores.length, avg:+avg.toFixed(2), negRate:+(neg/scores.length*100).toFixed(1) };
+}
+
+function computeMonthlyTrend(unit) {
+  if (!unit.scoresByDate || !unit.scoresByDate.length) return [];
+  var byMonth = {};
+  unit.scoresByDate.forEach(function(s) {
+    var month = s.date.slice(0,7);
+    if (!byMonth[month]) byMonth[month] = [];
+    byMonth[month].push(s.score);
+  });
+  return Object.keys(byMonth).sort().map(function(m2) {
+    var sc = byMonth[m2];
+    return { month:m2, avg:+(sc.reduce(function(a,b){return a+b;},0)/sc.length).toFixed(2), n:sc.length };
+  });
+}
+
 function buildSystem(userQuery) {
   var a = runAnalytics();
   buildVisuals(userQuery, a);
 
-  var tu = findUnit(userQuery, a.unitStats);
+  var tu        = findUnit(userQuery, a.unitStats);
+  var dateRange = parseDateRange(userQuery);
+  var intent    = classifyQuery(userQuery);
 
-  // Include: top 20 + bottom 10 + focus unit
-  // This covers both "best performers" and "at-risk units" questions
-  // while keeping prompt under 6000 chars for Cortex timeout
   var top20    = a.unitStats.slice(0, 20);
   var bottom10 = a.unitStats.slice(-10);
-
-  // Merge, dedup by key
-  var seen = {};
-  var featured = [];
-  function addUnit(u) { if (!seen[u.key]) { seen[u.key] = 1; featured.push(u); } }
-  if (tu) addUnit(tu);
-  top20.forEach(addUnit);
-  bottom10.forEach(addUnit);
+  var seen = {}, featured = [];
+  function addU(u) { if (!seen[u.key]) { seen[u.key]=1; featured.push(u); } }
+  if (tu) addU(tu);
+  top20.forEach(addU);
+  bottom10.forEach(addU);
 
   var totalUnits = a.uniqueUnits;
-  var shownNote  = totalUnits > featured.length
-    ? '(showing top 20 + bottom 10 of ' + totalUnits + ' total units)'
-    : '';
-
-  // Compact directory
-  var unitDir = featured.map(function(u) {
-    return (u.sap || '?') + '=' + u.name.slice(0, 28);
-  }).join(', ');
-
-  // Compact data lines -- mark bottom units clearly
   var bottom10Keys = {};
-  bottom10.forEach(function(u) { bottom10Keys[u.key] = 1; });
+  bottom10.forEach(function(u){ bottom10Keys[u.key]=1; });
 
   var unitLines = featured.map(function(u) {
-    var tag = bottom10Keys[u.key] && u.wScore < 3 ? '[AT-RISK]' : '';
-    return tag + u.name.slice(0,28) + '|' + (u.sap||'?') + '|n:' + u.responses
-      + '|wtd:' + u.wScore + '|neg:' + u.negRate + '%|' + u.conf.label
-      + '|' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,15)+'('+x[1]+')';}).join(',');
+    var tag  = bottom10Keys[u.key] && u.wScore < 3 ? '[AT-RISK]' : '';
+    var base = tag + u.name.slice(0,28) + '|SAP:' + (u.sap||'?')
+      + '|n:' + u.responses + '|wtd:' + u.wScore + '|neg:' + u.negRate + '%|' + u.conf.label
+      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,15)+'('+x[1]+')';}).join(',');
+    if (u.minDate) base += '|data:' + u.minDate + ' to ' + u.maxDate;
+    if (dateRange) {
+      var ps = computeDateStats(u, dateRange.start, dateRange.end);
+      if (ps) base += '|period_n:' + ps.n + '|period_avg:' + ps.avg + '|period_neg:' + ps.negRate + '%';
+    }
+    return base;
   }).join('\n');
 
   var unitFocus = '';
   if (tu) {
-    unitFocus = '\nFOCUS: ' + tu.name + ' (SAP ' + tu.sap + ')'
-      + ' wtd:' + tu.wScore + ' raw:' + tu.rawAvg + ' n=' + tu.responses
-      + ' ' + tu.conf.label + ' neg:' + tu.negRate + '%'
-      + ' issues:' + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(',') + '\n';
+    unitFocus = '\nFOCUS UNIT: ' + tu.name + ' (SAP ' + (tu.sap||'?') + ')'
+      + ' | wtd:' + tu.wScore + ' raw:' + tu.rawAvg + ' n=' + tu.responses
+      + ' | ' + tu.conf.label + ' confidence | neg:' + tu.negRate + '%'
+      + '\nTop issues: ' + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(', ');
+    if (tu.minDate) unitFocus += '\nData range: ' + tu.minDate + ' to ' + tu.maxDate;
+    if (dateRange) {
+      var ps2 = computeDateStats(tu, dateRange.start, dateRange.end);
+      if (ps2) unitFocus += '\nPeriod stats (' + dateRange.label + '): n=' + ps2.n + ' avg=' + ps2.avg + ' neg=' + ps2.negRate + '%';
+      else     unitFocus += '\nNo data found for period: ' + dateRange.label;
+      var trend = computeMonthlyTrend(tu);
+      if (trend.length >= 2) {
+        unitFocus += '\nMonthly CSAT trend: ' + trend.map(function(t){return t.month+':'+t.avg+'(n='+t.n+')';}).join(', ');
+      }
+    }
+    unitFocus += '\n';
+  }
+
+  var dateContext = '';
+  var todayStr = new Date().toISOString().slice(0,10);
+  if (dateRange) {
+    dateContext = '\nDATE FILTER: ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + ')'
+      + '\nToday: ' + todayStr
+      + '\nData available: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + '\n';
+  } else if (a.hasDateData) {
+    dateContext = '\nData date range: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + ' | Today: ' + todayStr + '\n';
+  }
+
+  var portfolioTrend = '';
+  if (intent.isDate && !tu) {
+    var byMonth = {};
+    for (var di = 0; di < DATA.length; di++) {
+      var row = DATA[di];
+      if (!row.audit_date || !row.csat) continue;
+      var month = row.audit_date.slice(0,7);
+      if (!byMonth[month]) byMonth[month] = [];
+      byMonth[month].push(parseFloat(row.csat));
+    }
+    var months = Object.keys(byMonth).sort().slice(-24);
+    if (months.length >= 2) {
+      portfolioTrend = '\nPORTFOLIO MONTHLY CSAT TREND (month:avg:n):\n'
+        + months.map(function(mo) {
+          var sc = byMonth[mo];
+          return mo + ':' + (sc.reduce(function(a,b){return a+b;},0)/sc.length).toFixed(2) + '(n='+sc.length+')';
+        }).join(', ') + '\n';
+    }
   }
 
   var rendered  = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
     .concat(pendingTables.map(function(t,i){return 'Table '+(i+1)+': '+t.title;})).join(', ') || 'none';
   var topIssues = a.topReasons.slice(0,8).map(function(x){return x[0].slice(0,20)+':'+x[1];}).join(', ');
+  var atRisk    = a.unitStats.filter(function(u){return u.wScore < 3 && u.rankable;}).length;
+  var thriving  = a.unitStats.filter(function(u){return u.wScore >= 4 && u.rankable;}).length;
 
-  var prompt = 'You are a FLIK Hospitality analyst. Bayesian-weighted CSAT (C=30). Scale 1-5: <3=at-risk, 3-3.9=neutral, 4+=good. '
-    + 'Confidence: High=n>=15, Moderate=n>=5, Low=n<5.\n\n'
-    + 'Portfolio: ' + totalUnits + ' units total | ' + a.uniqueResponses.toLocaleString() + ' responses | mean CSAT ' + a.gMean + '/5'
-    + ' | rankable:' + a.rankable + ' | at-risk(wtd<3):' + a.unitStats.filter(function(u){return u.wScore < 3 && u.rankable;}).length
-    + ' | thriving(wtd>=4):' + a.unitStats.filter(function(u){return u.wScore >= 4 && u.rankable;}).length + '\n'
+  return 'You are a senior FLIK Hospitality analytics expert at Compass Group. '
+    + 'You analyse VOC survey data using Bayesian-weighted CSAT scoring. '
+    + 'Formula: (n x raw + 30 x global_mean) / (n + 30). '
+    + 'Scale 1-5: below 3.0=at-risk, 3.0-3.9=neutral, 4.0+=thriving. '
+    + 'Confidence: High=n>=15 (reliable), Moderate=n>=5 (cautious), Low=n<5 (do not rank).\n\n'
+    + 'PORTFOLIO: ' + totalUnits + ' units | ' + a.uniqueResponses.toLocaleString() + ' responses'
+    + ' | weighted CSAT ' + a.gMean + '/5 | rankable:' + a.rankable
+    + ' | thriving:' + thriving + ' | at-risk:' + atRisk + '\n'
+    + dateContext
     + unitFocus
-    + '\nUnits ' + shownNote + ' (SAP=Name):\n' + unitDir + '\n\n'
-    + 'Data ([AT-RISK] = bottom performer, name|SAP|n|wtd|neg%|conf|top issues):\n' + unitLines + '\n\n'
+    + portfolioTrend
+    + '\nUNIT DATA (top 20 + bottom 10 of ' + totalUnits + ' total):\n' + unitLines + '\n\n'
     + 'Top portfolio issues: ' + topIssues + '\n'
     + 'Visuals shown: ' + rendered + '\n\n'
-    + 'Rules: plain markdown only, no HTML, cite n= for every claim, end with ### Key Takeaway, '
-    + 'use display names not SAP numbers, flag low confidence, never speculate on n<5 units.';
-
-  return prompt;
+    + 'RULES: plain markdown only, no HTML, no code fences. '
+    + 'Never reproduce data already in charts/tables. '
+    + 'For date questions: compute changes, identify spikes/declines, give specific dates/months. '
+    + 'Cite n= and confidence for every unit claim. '
+    + 'Use display names not SAP numbers. '
+    + 'Never speculate on n<5 units. '
+    + 'End with ### Key Takeaway (3-5 sentences).';
 }
 
 function sanitizeReply(raw) {
@@ -1090,7 +1224,8 @@ fetch('/api/survey-data').then(function(r){
       unit:                    r.unit                    || '',
       analytics_question_text: r.analytics_question_text || '',
       csat:                    parseFloat(r.csat)        || 0,
-      csat_reason:             r.csat_reason             || ''
+      csat_reason:             r.csat_reason             || '',
+      audit_date:              r.audit_date              || ''
     };
   });
   customData = true;

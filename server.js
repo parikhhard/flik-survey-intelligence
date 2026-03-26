@@ -567,10 +567,11 @@ function dbCreateUser(email, fullname, hash) {
 app.get('/api/survey-data', requireAuth, function (req, res) {
   const sql = [
     'SELECT RESPONSE_ID, UNIT_SAP_NUMBER,',
-    '  UNIT AS UNIT_NAME, QUESTION_MAPPING_CLEANSED_QUESTION AS ANALYTICS_QUESTION_TEXT, CSAT, CSAT_REASON',
+    '  UNIT AS UNIT_NAME, QUESTION_MAPPING_CLEANSED_QUESTION AS ANALYTICS_QUESTION_TEXT,',
+    '  CSAT, CSAT_REASON, AUDIT_DATE',
     'FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES',
     'WHERE CSAT_REASON IS NOT NULL AND CSAT IS NOT NULL',
-    'ORDER BY UNIT_SAP_NUMBER'
+    'ORDER BY AUDIT_DATE ASC'
   ].join('\n');
 
   sfQuery(sql, function (err, rows) {
@@ -582,7 +583,8 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
         unit:                    String(r.UNIT_NAME               || ''),
         analytics_question_text: String(r.ANALYTICS_QUESTION_TEXT || ''),
         csat:                    parseFloat(r.CSAT)               || 0,
-        csat_reason:             String(r.CSAT_REASON             || '')
+        csat_reason:             String(r.CSAT_REASON             || ''),
+        audit_date:              r.AUDIT_DATE ? String(r.AUDIT_DATE).slice(0,10) : ''
       };
     });
     console.log('[Survey Data] ' + out.length + ' rows -> ' + req.session.user.email);
