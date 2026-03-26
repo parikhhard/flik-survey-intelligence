@@ -19,6 +19,12 @@ const helmet    = require('helmet');
 
 const app = express();
 app.set('trust proxy', 1);
+
+// Increase timeouts for long-running Snowflake Cortex calls
+app.use(function (req, res, next) {
+  res.setTimeout(120000); // 2 minutes max per request
+  next();
+});
 app.use(express.json({ limit: '4mb' }));
 app.use(express.urlencoded({ extended: true }));
 app.use(helmet({ contentSecurityPolicy: false }));
@@ -868,7 +874,7 @@ app.post('/api/chat', requireAuth, function (req, res) {
         _provider:   'snowflake-cortex',
         _ragUnits:   ragUnits ? ragUnits.length : 0
       });
-    });
+    }, 90000);
   }
 
   // Use RAG if enabled and query provided
