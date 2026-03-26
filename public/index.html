@@ -244,34 +244,18 @@ var pendingCharts = [];
 var pendingTables = [];
 
 var SEED = [
-  {response_id:'R001',unit_sap_number:1018,unit:'Siemens Medical Solutions - NY',csat:2,csat_reason:'Variety',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R001',unit_sap_number:1018,unit:'Siemens Medical Solutions - NY',csat:2,csat_reason:'Variety',analytics_question_text:'Please select any issues today'},
-  {response_id:'R002',unit_sap_number:1018,unit:'Siemens Medical Solutions - NY',csat:4,csat_reason:'Good Food',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R003',unit_sap_number:1018,unit:'Siemens Medical Solutions - NY',csat:1,csat_reason:'Wait Time',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R003',unit_sap_number:1018,unit:'Siemens Medical Solutions - NY',csat:1,csat_reason:'Wait Time',analytics_question_text:'Did you experience issues today?'},
-  {response_id:'R004',unit_sap_number:1049,unit:'Cleary Gottlieb - NYC',csat:4.5,csat_reason:'Other',analytics_question_text:'Did you experience any issues today?'},
-  {response_id:'R005',unit_sap_number:1049,unit:'Cleary Gottlieb - NYC',csat:1,csat_reason:'Order Accuracy',analytics_question_text:'What was incorrect about your order?'},
-  {response_id:'R005',unit_sap_number:1049,unit:'Cleary Gottlieb - NYC',csat:1,csat_reason:'Order Accuracy',analytics_question_text:'Please select any issues today'},
-  {response_id:'R006',unit_sap_number:1049,unit:'Cleary Gottlieb - NYC',csat:5,csat_reason:'Exceptional',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R007',unit_sap_number:1049,unit:'Cleary Gottlieb - NYC',csat:3.5,csat_reason:'Service Speed',analytics_question_text:'How did you dine with us?'},
-  {response_id:'R008',unit_sap_number:2031,unit:'Goldman Sachs - NYC',csat:3,csat_reason:'Food Temperature',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R008',unit_sap_number:2031,unit:'Goldman Sachs - NYC',csat:3,csat_reason:'Wait Time',analytics_question_text:'Please select any issues today'},
-  {response_id:'R009',unit_sap_number:2031,unit:'Goldman Sachs - NYC',csat:4,csat_reason:'Good Variety',analytics_question_text:'How did you dine with us?'},
-  {response_id:'R010',unit_sap_number:2031,unit:'Goldman Sachs - NYC',csat:2,csat_reason:'Cleanliness',analytics_question_text:'Did you experience any issues today?'},
-  {response_id:'R010',unit_sap_number:2031,unit:'Goldman Sachs - NYC',csat:2,csat_reason:'Cleanliness',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R011',unit_sap_number:3042,unit:'Morgan Stanley - Midtown',csat:1.5,csat_reason:'Cleanliness',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R011',unit_sap_number:3042,unit:'Morgan Stanley - Midtown',csat:1.5,csat_reason:'Staff Attitude',analytics_question_text:'Did you experience any issues today?'},
-  {response_id:'R012',unit_sap_number:3042,unit:'Morgan Stanley - Midtown',csat:2.5,csat_reason:'Portion Size',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R013',unit_sap_number:3042,unit:'Morgan Stanley - Midtown',csat:1,csat_reason:'Staff Attitude',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R013',unit_sap_number:3042,unit:'Morgan Stanley - Midtown',csat:1,csat_reason:'Staff Attitude',analytics_question_text:'Please select any issues today'},
-  {response_id:'R014',unit_sap_number:4105,unit:'JPMorgan Chase - Park Ave',csat:4.5,csat_reason:'Great Service',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R015',unit_sap_number:4105,unit:'JPMorgan Chase - Park Ave',csat:5,csat_reason:'Perfect',analytics_question_text:'How did you dine with us?'},
-  {response_id:'R016',unit_sap_number:4105,unit:'JPMorgan Chase - Park Ave',csat:4,csat_reason:'Good Food',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R016',unit_sap_number:4105,unit:'JPMorgan Chase - Park Ave',csat:4,csat_reason:'Good Food',analytics_question_text:'Would you like to recognize a team member?'},
-  {response_id:'R017',unit_sap_number:5200,unit:'Pfizer - Manhattan HQ',csat:3,csat_reason:'Variety',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R018',unit_sap_number:5200,unit:'Pfizer - Manhattan HQ',csat:2,csat_reason:'Food Temperature',analytics_question_text:'How satisfied were you with your dining experience?'},
-  {response_id:'R019',unit_sap_number:5200,unit:'Pfizer - Manhattan HQ',csat:4,csat_reason:'Clean Space',analytics_question_text:'Did you experience any issues today?'},
-  {response_id:'R020',unit_sap_number:5200,unit:'Pfizer - Manhattan HQ',csat:3.5,csat_reason:'Decent',analytics_question_text:'How satisfied were you with your dining experience?'}
+  {unit_key:'1018',unit_name:'Siemens Medical Solutions - NY',unit_sap:'1018',month:'2024-10',responses:8,avg_csat:2.1,neg_count:5,pos_count:1,det_count:4,score_count:8,top_issues:'Wait Time:4|Cleanliness:2|Staff Attitude:2'},
+  {unit_key:'1018',unit_name:'Siemens Medical Solutions - NY',unit_sap:'1018',month:'2024-11',responses:6,avg_csat:2.4,neg_count:3,pos_count:1,det_count:2,score_count:6,top_issues:'Wait Time:3|Cleanliness:2|Other:1'},
+  {unit_key:'1049',unit_name:'Cleary Gottlieb - NYC',unit_sap:'1049',month:'2024-10',responses:10,avg_csat:3.2,neg_count:3,pos_count:4,det_count:2,score_count:10,top_issues:'Order Accuracy:4|Service Speed:3|Other:2'},
+  {unit_key:'1049',unit_name:'Cleary Gottlieb - NYC',unit_sap:'1049',month:'2024-11',responses:8,avg_csat:3.5,neg_count:2,pos_count:4,det_count:1,score_count:8,top_issues:'Order Accuracy:3|Service Speed:2|Exceptional:2'},
+  {unit_key:'2031',unit_name:'Goldman Sachs - NYC',unit_sap:'2031',month:'2024-10',responses:12,avg_csat:3.0,neg_count:4,pos_count:3,det_count:3,score_count:12,top_issues:'Food Temperature:4|Wait Time:3|Cleanliness:3'},
+  {unit_key:'2031',unit_name:'Goldman Sachs - NYC',unit_sap:'2031',month:'2024-11',responses:14,avg_csat:3.2,neg_count:3,pos_count:4,det_count:2,score_count:14,top_issues:'Food Temperature:3|Good Variety:3|Wait Time:2'},
+  {unit_key:'3042',unit_name:'Morgan Stanley - Midtown',unit_sap:'3042',month:'2024-10',responses:9,avg_csat:1.8,neg_count:8,pos_count:0,det_count:7,score_count:9,top_issues:'Cleanliness:5|Staff Attitude:4|Portion Size:2'},
+  {unit_key:'3042',unit_name:'Morgan Stanley - Midtown',unit_sap:'3042',month:'2024-11',responses:7,avg_csat:2.0,neg_count:6,pos_count:0,det_count:5,score_count:7,top_issues:'Staff Attitude:4|Cleanliness:3|Other:1'},
+  {unit_key:'4105',unit_name:'JPMorgan Chase - Park Ave',unit_sap:'4105',month:'2024-10',responses:15,avg_csat:4.5,neg_count:1,pos_count:12,det_count:0,score_count:15,top_issues:'Great Service:8|Good Food:5|Perfect:3'},
+  {unit_key:'4105',unit_name:'JPMorgan Chase - Park Ave',unit_sap:'4105',month:'2024-11',responses:13,avg_csat:4.3,neg_count:1,pos_count:11,det_count:0,score_count:13,top_issues:'Great Service:7|Good Food:4|Clean Space:2'},
+  {unit_key:'5200',unit_name:'Pfizer - Manhattan HQ',unit_sap:'5200',month:'2024-10',responses:11,avg_csat:3.1,neg_count:3,pos_count:4,det_count:2,score_count:11,top_issues:'Variety:4|Food Temperature:3|Decent:2'},
+  {unit_key:'5200',unit_name:'Pfizer - Manhattan HQ',unit_sap:'5200',month:'2024-11',responses:9,avg_csat:3.3,neg_count:2,pos_count:4,det_count:1,score_count:9,top_issues:'Variety:3|Clean Space:3|Food Temperature:2'}
 ];
 DATA = SEED.slice();
 
@@ -957,14 +941,11 @@ function buildSystem(userQuery) {
     }
     var months2 = Object.keys(byMonth2).sort().slice(-24);
     if (months2.length >= 2) {
-      portfolioTrend = '
-PORTFOLIO MONTHLY CSAT TREND (month:avg_csat:n_responses):
-'
+      portfolioTrend = '\nPORTFOLIO MONTHLY CSAT TREND (month:avg_csat:n_responses):\n'
         + months2.map(function(mo) {
           var d = byMonth2[mo];
           return mo + ':' + (d.n ? (d.sum/d.n).toFixed(2) : '?') + '(n='+d.n+')';
-        }).join(', ') + '
-';
+        }).join(', ') + '\n';
     }
   }
 
