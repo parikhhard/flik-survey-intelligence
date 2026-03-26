@@ -56,7 +56,7 @@ async function sendEmail(to, subject, html) {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': brevoKey },
       body: JSON.stringify({
-        sender:      { name: 'FLIK Survey Intelligence', email: 'hard.parikh@compass-usa.com' },
+        sender:      { name: 'FLIK Survey Intelligence', email: 'noreply@compass-usa.com' },
         to:          [{ email: to }],
         subject:     subject,
         htmlContent: html
@@ -563,31 +563,104 @@ function dbCreateUser(email, fullname, hash) {
   });
 }
 
-// ── Survey data ───────────────────────────────────────────────────────────────
+// ── Survey data — pre-aggregated by unit + month in Snowflake ─────────────────
+// Returns ~2k-5k rows instead of 293k raw rows — no more 502 timeouts
 app.get('/api/survey-data', requireAuth, function (req, res) {
-  const sql = [
-    'SELECT RESPONSE_ID, UNIT_SAP_NUMBER,',
-    '  UNIT AS UNIT_NAME, QUESTION_MAPPING_CLEANSED_QUESTION AS ANALYTICS_QUESTION_TEXT,',
-    '  CSAT, CSAT_REASON, AUDIT_DATE',
-    'FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES',
-    'WHERE CSAT_REASON IS NOT NULL AND CSAT IS NOT NULL',
-    'ORDER BY AUDIT_DATE ASC'
-  ].join('\n');
+  const sql = `
+    WITH base AS (
+      SELECT
+        TRIM(UNIT)                                                  AS UNIT_NAME,
+        TRIM(UNIT_SAP_NUMBER::VARCHAR)                             AS UNIT_SAP,
+        COALESCE(
+          NULLIF(TRIM(UNIT_SAP_NUMBER::VARCHAR), '0'),
+          NULLIF(TRIM(UNIT_SAP_NUMBER::VARCHAR), ''),
+          TRIM(UNIT)
+        )                                                           AS UNIT_KEY,
+        TO_CHAR(AUDIT_DATE, 'YYYY-MM')                             AS MONTH,
+        RESPONSE_ID,
+        CSAT,
+        CSAT_REASON
+      FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
+      WHERE CSAT_REASON IS NOT NULL
+        AND CSAT IS NOT NULL
+        AND AUDIT_DATE IS NOT NULL
+        AND TRIM(UNIT) IS NOT NULL
+        AND TRIM(UNIT) != ''
+    ),
+    unit_months AS (
+      SELECT
+        UNIT_KEY,
+        MAX(UNIT_NAME)                                              AS UNIT_NAME,
+        MAX(UNIT_SAP)                                              AS UNIT_SAP,
+        MONTH,
+        COUNT(DISTINCT RESPONSE_ID)                                AS RESPONSES,
+        AVG(CSAT)                                                  AS AVG_CSAT,
+        SUM(CASE WHEN CSAT < 3  THEN 1 ELSE 0 END)                AS NEG_COUNT,
+        SUM(CASE WHEN CSAT >= 4 THEN 1 ELSE 0 END)                AS POS_COUNT,
+        SUM(CASE WHEN CSAT <= 2 THEN 1 ELSE 0 END)                AS DET_COUNT,
+        COUNT(CSAT)                                                AS SCORE_COUNT
+      FROM base
+      GROUP BY UNIT_KEY, MONTH
+    ),
+    top_issues AS (
+      SELECT
+        UNIT_KEY,
+        CSAT_REASON,
+        COUNT(*)                                                   AS CNT,
+        ROW_NUMBER() OVER (
+          PARTITION BY UNIT_KEY ORDER BY COUNT(*) DESC
+        )                                                          AS RN
+      FROM base
+      WHERE CSAT_REASON IS NOT NULL AND TRIM(CSAT_REASON) != ''
+      GROUP BY UNIT_KEY, CSAT_REASON
+    ),
+    issues_agg AS (
+      SELECT
+        UNIT_KEY,
+        LISTAGG(CSAT_REASON || ':' || CNT, '|')
+          WITHIN GROUP (ORDER BY CNT DESC)                         AS TOP_ISSUES
+      FROM top_issues
+      WHERE RN <= 8
+      GROUP BY UNIT_KEY
+    )
+    SELECT
+      um.UNIT_KEY,
+      um.UNIT_NAME,
+      um.UNIT_SAP,
+      um.MONTH,
+      um.RESPONSES,
+      ROUND(um.AVG_CSAT, 4)                                       AS AVG_CSAT,
+      um.NEG_COUNT,
+      um.POS_COUNT,
+      um.DET_COUNT,
+      um.SCORE_COUNT,
+      COALESCE(ia.TOP_ISSUES, '')                                  AS TOP_ISSUES
+    FROM unit_months um
+    LEFT JOIN issues_agg ia ON um.UNIT_KEY = ia.UNIT_KEY
+    ORDER BY um.UNIT_KEY, um.MONTH
+  `;
 
   sfQuery(sql, function (err, rows) {
-    if (err) { console.error('[Survey Data]', err.message); return res.status(500).json({ error: err.message }); }
+    if (err) {
+      console.error('[Survey Data]', err.message);
+      return res.status(500).json({ error: err.message });
+    }
     const out = rows.map(function (r) {
       return {
-        response_id:             String(r.RESPONSE_ID             || ''),
-        unit_sap_number:         String(r.UNIT_SAP_NUMBER         || ''),
-        unit:                    String(r.UNIT_NAME               || ''),
-        analytics_question_text: String(r.ANALYTICS_QUESTION_TEXT || ''),
-        csat:                    parseFloat(r.CSAT)               || 0,
-        csat_reason:             String(r.CSAT_REASON             || ''),
-        audit_date:              r.AUDIT_DATE ? String(r.AUDIT_DATE).slice(0,10) : ''
+        unit_key:    String(r.UNIT_KEY   || ''),
+        unit_name:   String(r.UNIT_NAME  || ''),
+        unit_sap:    String(r.UNIT_SAP   || ''),
+        month:       String(r.MONTH      || ''),
+        responses:   parseInt(r.RESPONSES)    || 0,
+        avg_csat:    parseFloat(r.AVG_CSAT)   || 0,
+        neg_count:   parseInt(r.NEG_COUNT)    || 0,
+        pos_count:   parseInt(r.POS_COUNT)    || 0,
+        det_count:   parseInt(r.DET_COUNT)    || 0,
+        score_count: parseInt(r.SCORE_COUNT)  || 0,
+        top_issues:  String(r.TOP_ISSUES || '')
       };
     });
-    console.log('[Survey Data] ' + out.length + ' rows -> ' + req.session.user.email);
+    console.log('[Survey Data] ' + out.length + ' unit-month rows -> ' + req.session.user.email);
     res.json(out);
   });
 });
