@@ -790,29 +790,31 @@ function mountCharts() {
 }
 
 function findUnit(query, unitStats) {
-  // Robust bidirectional lookup: SAP number (exact), unit name (partial), or SAP substring
+  if (!query || !unitStats || !unitStats.length) return null;
   var q = query.toLowerCase().trim();
-  var sapNum = parseInt(q.replace(/[^0-9]/g,'')) || 0;
-  // Pass 1: exact SAP match
-  for (var i = 0; i < unitStats.length; i++) {
-    if (unitStats[i].sap && unitStats[i].sap === sapNum) return unitStats[i];
-  }
-  // Pass 2: name contains query string (3+ chars)
-  if (q.length >= 3) {
+  var sapMatch = (q.match(/\b(\d{4,7}[a-z]?)\b/i) || [])[1] || '';
+  if (sapMatch) {
     for (var i = 0; i < unitStats.length; i++) {
-      if (unitStats[i].name.toLowerCase().indexOf(q) !== -1) return unitStats[i];
+      if (String(unitStats[i].sap).toLowerCase() === sapMatch.toLowerCase()) return unitStats[i];
     }
   }
-  // Pass 3: SAP string appears anywhere in query
+  for (var i = 0; i < unitStats.length; i++) {
+    var uname = unitStats[i].name.toLowerCase();
+    if (uname.length >= 3 && q.indexOf(uname) !== -1) return unitStats[i];
+  }
+  var words = q.split(/\s+/).filter(function(w){ return w.length >= 4; });
+  var best = null, bestScore = 0;
+  for (var i = 0; i < unitStats.length; i++) {
+    var uname = unitStats[i].name.toLowerCase();
+    var score = 0;
+    for (var wi = 0; wi < words.length; wi++) {
+      if (uname.indexOf(words[wi]) !== -1) score++;
+    }
+    if (score > bestScore) { bestScore = score; best = unitStats[i]; }
+  }
+  if (bestScore >= 1) return best;
   for (var i = 0; i < unitStats.length; i++) {
     if (unitStats[i].sap && q.indexOf(String(unitStats[i].sap)) !== -1) return unitStats[i];
-  }
-  // Pass 4: any word in query matches any word in unit name
-  var words = q.split(/\s+/).filter(function(w){ return w.length >= 3; });
-  for (var wi = 0; wi < words.length; wi++) {
-    for (var i = 0; i < unitStats.length; i++) {
-      if (unitStats[i].name.toLowerCase().indexOf(words[wi]) !== -1) return unitStats[i];
-    }
   }
   return null;
 }
