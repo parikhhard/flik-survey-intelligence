@@ -484,8 +484,8 @@ function buildConnOptions() {
     role:           process.env.SNOWFLAKE_ROLE      || 'E15_SRV_DBT',
     database:       'FLIK_ANALYTICS',
     schema:         'CURIOSITY_WIDGETS',
-    loginTimeout:   30,
-    networkTimeout: 120000
+    loginTimeout:   15,
+    networkTimeout: 25000
   };
   if (process.env.SNOWFLAKE_PRIVATE_KEY) {
     const pk = crypto.createPrivateKey({ key: process.env.SNOWFLAKE_PRIVATE_KEY, format: 'pem' });
@@ -499,15 +499,38 @@ function buildConnOptions() {
   return opts;
 }
 
-function sfQuery(sql, callback) {
+function sfQuery(sql, callback, timeoutMs) {
+  timeoutMs = timeoutMs || 22000; // Default 22s — safely under Railway's 30s limit
   let opts;
   try { opts = buildConnOptions(); } catch (e) { return callback(e); }
   const conn = snowflake.createConnection(opts);
+  let done = false;
+  let stmt = null;
+
+  // Hard timeout — abort query and return error if exceeded
+  const timer = setTimeout(function () {
+    if (done) return;
+    done = true;
+    console.error('[Snowflake] Query timeout after ' + timeoutMs + 'ms');
+    try { if (stmt) stmt.cancel(); } catch (e) {}
+    try { conn.destroy(function () {}); } catch (e) {}
+    callback(new Error('Query timed out after ' + timeoutMs + 'ms'));
+  }, timeoutMs);
+
   conn.connect(function (err, c) {
-    if (err) { console.error('[Snowflake]', err.message); return callback(err); }
-    c.execute({
+    if (err) {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      console.error('[Snowflake]', err.message);
+      return callback(err);
+    }
+    stmt = c.execute({
       sqlText:  sql,
-      complete: function (qErr, stmt, rows) {
+      complete: function (qErr, s, rows) {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
         try { c.destroy(function () {}); } catch (e) {}
         if (qErr) return callback(qErr);
         callback(null, rows);
@@ -563,7 +586,7 @@ function dbCreateUser(email, fullname, hash) {
   });
 }
 
-// ── Survey data — two simple queries, fast and reliable ──────────────────────
+// ── Survey data — two queries run in parallel ────────────────────────────────
 app.get('/api/survey-data', requireAuth, function (req, res) {
 
   // Query 1: Unit-month aggregates
@@ -592,7 +615,7 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
     SELECT
       COALESCE(NULLIF(UNIT_SAP_NUMBER::VARCHAR, '0'), UNIT) AS UNIT_KEY,
       CSAT_REASON,
-      COUNT(DISTINCT RESPONSE_ID) AS CNT
+      COUNT(DISTINCT RESPONSE_ID)                           AS CNT
     FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
     WHERE CSAT_REASON IS NOT NULL
       AND TRIM(CSAT_REASON) != ''
@@ -601,55 +624,59 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
     ORDER BY 1, 3 DESC
   `;
 
-  sfQuery(sql1, function (err1, rows1) {
+  // Run both queries in parallel — cuts total time in half
+  var done1 = false, done2 = false;
+  var rows1 = null, rows2 = null;
+  var err1  = null, err2  = null;
+  var sent  = false;
+
+  function finish() {
+    if (!done1 || !done2 || sent) return;
+    sent = true;
+
     if (err1) {
-      console.error('[Survey Data] Query 1 error:', err1.message);
+      console.error('[Survey Data] Query 1 failed:', err1.message);
       return res.status(500).json({ error: err1.message });
     }
 
-    sfQuery(sql2, function (err2, rows2) {
-      if (err2) {
-        console.error('[Survey Data] Query 2 error:', err2.message);
-        // Return data without issues rather than failing
-        rows2 = [];
-      }
-
-      // Build issues map: unit_key -> "reason:cnt|reason:cnt"
-      var issueMap = {};
-      if (rows2) {
-        rows2.forEach(function (r) {
-          var k = String(r.UNIT_KEY || '');
-          var reason = String(r.CSAT_REASON || '').trim();
-          var cnt    = parseInt(r.CNT) || 0;
-          if (!k || !reason) return;
-          if (!issueMap[k]) issueMap[k] = [];
-          if (issueMap[k].length < 8) {
-            issueMap[k].push(reason + ':' + cnt);
-          }
-        });
-      }
-
-      const out = rows1.map(function (r) {
-        var key = String(r.UNIT_KEY || '');
-        return {
-          unit_key:    key,
-          unit_name:   String(r.UNIT_NAME  || ''),
-          unit_sap:    String(r.UNIT_SAP   || ''),
-          month:       String(r.MONTH      || ''),
-          responses:   parseInt(r.RESPONSES)   || 0,
-          avg_csat:    parseFloat(r.AVG_CSAT)  || 0,
-          neg_count:   parseInt(r.NEG_COUNT)   || 0,
-          pos_count:   parseInt(r.POS_COUNT)   || 0,
-          det_count:   parseInt(r.DET_COUNT)   || 0,
-          score_count: parseInt(r.SCORE_COUNT) || 0,
-          top_issues:  (issueMap[key] || []).join('|')
-        };
+    // Build issues map: unit_key -> ["reason:cnt", ...]
+    var issueMap = {};
+    if (rows2) {
+      rows2.forEach(function (r) {
+        var k      = String(r.UNIT_KEY    || '');
+        var reason = String(r.CSAT_REASON || '').trim();
+        var cnt    = parseInt(r.CNT)      || 0;
+        if (!k || !reason) return;
+        if (!issueMap[k]) issueMap[k] = [];
+        if (issueMap[k].length < 8) issueMap[k].push(reason + ':' + cnt);
       });
+    }
 
-      console.log('[Survey Data] ' + out.length + ' unit-month rows, ' + Object.keys(issueMap).length + ' units with issues -> ' + req.session.user.email);
-      res.json(out);
+    const out = (rows1 || []).map(function (r) {
+      var key = String(r.UNIT_KEY || '');
+      return {
+        unit_key:    key,
+        unit_name:   String(r.UNIT_NAME  || ''),
+        unit_sap:    String(r.UNIT_SAP   || ''),
+        month:       String(r.MONTH      || ''),
+        responses:   parseInt(r.RESPONSES)   || 0,
+        avg_csat:    parseFloat(r.AVG_CSAT)  || 0,
+        neg_count:   parseInt(r.NEG_COUNT)   || 0,
+        pos_count:   parseInt(r.POS_COUNT)   || 0,
+        det_count:   parseInt(r.DET_COUNT)   || 0,
+        score_count: parseInt(r.SCORE_COUNT) || 0,
+        top_issues:  (issueMap[key] || []).join('|')
+      };
     });
-  });
+
+    console.log('[Survey Data] ' + out.length + ' rows | ' +
+      Object.keys(issueMap).length + ' units with issues -> ' +
+      req.session.user.email);
+    res.json(out);
+  }
+
+  sfQuery(sql1, function (e, r) { err1 = e; rows1 = r; done1 = true; finish(); }, 28000);
+  sfQuery(sql2, function (e, r) { err2 = e; rows2 = e ? [] : r; done2 = true; finish(); }, 28000);
 });
 
 // ── RAG — Search relevant units via Cortex Search REST API ───────────────────
