@@ -31,6 +31,7 @@ header{height:62px;flex-shrink:0;background:var(--warm);border-bottom:1px solid 
 .hbtn:hover{border-color:var(--g2);color:var(--g2);background:var(--g6);}
 .hbtn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;}
 .hbtn.active{border-color:rgba(45,106,79,.3);background:var(--g6);color:var(--g2);}
+#csv-file{display:none;}
 .app{flex:1;display:flex;overflow:hidden;}
 aside{width:270px;flex-shrink:0;background:var(--warm);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;}
 .aside-scroll{flex:1;overflow-y:auto;padding:12px 10px;}
@@ -152,6 +153,23 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
 </head>
 <body>
 
+<div class="modal-ov" id="key-modal">
+  <div class="modal-box">
+    <div class="mlogo">
+      <div class="mlmark"><svg viewBox="0 0 24 24"><path d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-4.5-6.72-5.5-7.52-5.5-4.5 0-7.51 3.03-7.51 5.5v5h15.03v-5z"/></svg></div>
+      <div><span class="mlname">FLIK</span><span class="mlsub">Survey Intelligence</span></div>
+    </div>
+    <h2>Connect Your AI</h2>
+    <p class="mdesc">Enter your Anthropic API key. Stored in memory only for this session.<br><br>Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
+    <div class="kw">
+      <input type="password" id="api-key-input" placeholder="sk-ant-api03-..." autocomplete="off">
+      <button class="eye-btn" onclick="toggleEye()"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    </div>
+    <button class="msave" onclick="saveKey()">Save &amp; Connect</button>
+    <p class="mnote">Key is cleared when you close this tab.</p>
+  </div>
+</div>
+
 <header>
   <div class="logo">
     <div class="lmark"><svg viewBox="0 0 24 24"><path d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-4.5-6.72-5.5-7.52-5.5-4.5 0-7.51 3.03-7.51 5.5v5h15.03v-5z"/></svg></div>
@@ -159,15 +177,19 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
   </div>
   <div class="hact">
     <div class="badge"><div class="pdot"></div>AI Analyst</div>
-
+    <button class="hbtn" onclick="document.getElementById('csv-file').click()">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Upload CSV
+    </button>
+    <button class="hbtn" id="key-btn" onclick="showModal()">
+      <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      <span id="key-label">Set API Key</span>
+    </button>
     <button class="hbtn" onclick="clearChat()">
       <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
       New Chat
     </button>
-    <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;background:var(--g6);border:1px solid var(--bd2);border-radius:20px;font-size:11px;color:var(--g2);font-weight:600;">
-      <span id="user-name">...</span>
-      <a href="/logout" style="color:var(--slate);text-decoration:none;font-size:10px;font-weight:400;opacity:0.7;">Sign out</a>
-    </div>
+    <input type="file" id="csv-file" accept=".csv" onchange="handleCSV(this)">
   </div>
 </header>
 
@@ -217,7 +239,251 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
       </div>
     </div>
     <div class="input-zone">
-      <div class="notice-bar" id="notice-bar">Loading live survey data from Snowflake...</div>
+      <div class="notice-bar" id="notice-bar">Running on demo data - upload survey_responses.csv for live analysis.</div>
+      <div class="input-row">
+        <textarea id="user-input" placeholder="Ask about a unit by name or SAP#, request charts, tables, weighted analysis..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+        <button class="send-btn" onclick="sendMsg()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+      </div>
+      <p class="input-hint">Enter to send - Shift+Enter for new line - Reference any unit by name or SAP number</p>
+    </div>
+  </main>
+</div>
+
+
+<style>
+:root{
+  --cream:#FAF7F2;--warm:#FFFEF9;--char:#1C1C1E;
+  --g1:#1B4332;--g2:#2D6A4F;--g3:#40916C;--g4:#52B788;--g5:#95D5B2;--g6:#D8F3DC;
+  --amber:#E9C46A;--rose:#E76F51;--slate:#6B7280;--ls:#9CA3AF;
+  --bd:rgba(45,106,79,0.13);--bd2:rgba(45,106,79,0.22);
+  --sh:0 2px 8px rgba(15,15,16,0.07);
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{height:100%;overflow:hidden;}
+body{font-family:'DM Sans',sans-serif;color:var(--char);background:var(--cream);display:flex;flex-direction:column;}
+header{height:62px;flex-shrink:0;background:var(--warm);border-bottom:1px solid var(--bd);display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:var(--sh);z-index:100;}
+.logo{display:flex;align-items:center;gap:12px;}
+.lmark{width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,var(--g1),var(--g3));display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(27,67,50,.35);}
+.lmark svg{width:20px;height:20px;fill:white;}
+.ltext .brand{font-family:'Playfair Display',serif;font-size:18px;font-weight:700;color:var(--g1);display:block;}
+.ltext .sub{font-size:9px;font-weight:600;letter-spacing:.15em;text-transform:uppercase;color:var(--ls);}
+.hact{display:flex;align-items:center;gap:9px;}
+.badge{display:flex;align-items:center;gap:5px;background:var(--g6);border:1px solid rgba(45,106,79,.2);border-radius:20px;padding:4px 11px;font-size:11px;font-weight:600;color:var(--g2);}
+.pdot{width:6px;height:6px;border-radius:50%;background:var(--g3);animation:pd 2s ease-in-out infinite;}
+@keyframes pd{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(.8);}}
+.hbtn{display:flex;align-items:center;gap:6px;padding:6px 13px;background:transparent;border:1.5px solid var(--bd2);border-radius:8px;font-family:'DM Sans',sans-serif;font-size:12px;font-weight:500;color:var(--slate);cursor:pointer;transition:all .18s;}
+.hbtn:hover{border-color:var(--g2);color:var(--g2);background:var(--g6);}
+.hbtn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;}
+.hbtn.active{border-color:rgba(45,106,79,.3);background:var(--g6);color:var(--g2);}
+#csv-file{display:none;}
+.app{flex:1;display:flex;overflow:hidden;}
+aside{width:270px;flex-shrink:0;background:var(--warm);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;}
+.aside-scroll{flex:1;overflow-y:auto;padding:12px 10px;}
+.aside-scroll::-webkit-scrollbar{width:3px;}
+.aside-scroll::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px;}
+.slabel{display:block;font-size:9px;font-weight:700;letter-spacing:.15em;text-transform:uppercase;color:var(--ls);padding:8px 8px 4px;margin-top:4px;}
+.qchip{display:flex;align-items:flex-start;gap:8px;padding:8px 9px;border-radius:9px;border:none;background:transparent;cursor:pointer;width:100%;text-align:left;font-family:'DM Sans',sans-serif;transition:background .14s;}
+.qchip:hover{background:var(--g6);}
+.qi{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;}
+.ig{background:var(--g6);}.ia{background:#FEF3C7;}.ir{background:#FEE2E2;}.ib{background:#DBEAFE;}.ip{background:#EDE9FE;}
+.qt{font-size:11.5px;line-height:1.42;color:var(--char);}
+.sdiv{height:1px;background:var(--bd);margin:7px 4px;}
+.usearch{width:100%;padding:7px 10px;background:var(--cream);border:1.5px solid var(--bd2);border-radius:8px;font-family:'DM Sans',sans-serif;font-size:12px;color:var(--char);outline:none;margin:2px 0 6px;transition:border-color .18s;}
+.usearch:focus{border-color:var(--g3);}
+.ulist{max-height:170px;overflow-y:auto;}
+.ulist::-webkit-scrollbar{width:3px;}
+.ulist::-webkit-scrollbar-thumb{background:var(--bd2);border-radius:3px;}
+.uitem{padding:6px 9px;border-radius:7px;cursor:pointer;font-size:11px;color:var(--char);transition:background .13s;display:flex;align-items:center;gap:7px;}
+.uitem:hover{background:var(--g6);}
+.usap{font-size:10px;color:var(--ls);font-family:'DM Mono',monospace;flex-shrink:0;}
+.stats-box{border-top:1px solid var(--bd);padding:12px;background:linear-gradient(160deg,var(--g6),#fff);flex-shrink:0;}
+.stats-box h4{font-size:9px;font-weight:700;letter-spacing:.13em;text-transform:uppercase;color:var(--g2);margin-bottom:8px;}
+.srow{display:flex;justify-content:space-between;padding:3.5px 0;border-bottom:1px solid rgba(45,106,79,.07);}
+.srow:last-child{border-bottom:none;}
+.slbl{font-size:11px;color:var(--slate);}
+.sval{font-size:11px;font-weight:700;color:var(--g1);font-family:'DM Mono',monospace;}
+main{flex:1;display:flex;flex-direction:column;overflow:hidden;}
+#messages{flex:1;overflow-y:auto;padding:22px 30px;display:flex;flex-direction:column;gap:16px;scroll-behavior:smooth;}
+#messages::-webkit-scrollbar{width:5px;}
+#messages::-webkit-scrollbar-thumb{background:rgba(45,106,79,.18);border-radius:5px;}
+.welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100%;text-align:center;gap:16px;padding:40px 20px;}
+.wicon{width:68px;height:68px;border-radius:18px;background:linear-gradient(135deg,var(--g1),var(--g4));display:flex;align-items:center;justify-content:center;box-shadow:0 8px 28px rgba(27,67,50,.3);animation:float 3s ease-in-out infinite;}
+@keyframes float{0%,100%{transform:translateY(0);}50%{transform:translateY(-7px);}}
+.wicon svg{width:34px;height:34px;fill:white;}
+.welcome h2{font-family:'Playfair Display',serif;font-size:23px;font-weight:700;color:var(--g1);}
+.welcome p{font-size:13.5px;color:var(--slate);max-width:430px;line-height:1.65;}
+.wchips{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;max-width:500px;}
+.wchip{background:var(--warm);border:1.5px solid var(--bd2);border-radius:20px;padding:7px 15px;font-size:12px;font-weight:500;color:var(--g2);cursor:pointer;transition:all .18s;font-family:'DM Sans',sans-serif;}
+.wchip:hover{background:var(--g6);border-color:var(--g3);transform:translateY(-1px);}
+.msg{display:flex;gap:11px;animation:mi .26s ease forwards;}
+@keyframes mi{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+.msg.user{align-self:flex-end;flex-direction:row-reverse;max-width:68%;}
+.msg.bot{max-width:95%;}
+.av{width:31px;height:31px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:12px;font-weight:700;align-self:flex-start;margin-top:2px;}
+.av.bot{background:linear-gradient(135deg,var(--g1),var(--g3));color:white;font-family:'Playfair Display',serif;}
+.av.user{background:var(--char);color:var(--cream);font-size:10px;}
+.bubble{padding:12px 16px;border-radius:12px;font-size:13.5px;line-height:1.65;}
+.msg.bot .bubble{background:var(--warm);border:1px solid var(--bd);border-top-left-radius:3px;color:var(--char);box-shadow:var(--sh);}
+.msg.user .bubble{background:linear-gradient(135deg,var(--g1),var(--g3));color:white;border-top-right-radius:3px;}
+.mtime{font-size:9px;color:var(--ls);margin-top:4px;}
+.msg.user .mtime{text-align:right;}
+.bubble h3{font-family:'Playfair Display',serif;font-size:15px;font-weight:600;color:var(--g1);margin:10px 0 5px;}
+.bubble ul{padding-left:18px;margin:5px 0;}
+.bubble li{margin-bottom:3px;}
+.bubble strong{font-weight:600;}
+.bubble em{font-style:italic;color:var(--slate);}
+.bubble p{margin-bottom:5px;}
+.bubble p:last-child{margin-bottom:0;}
+.bubble blockquote{background:var(--g6);border-left:3px solid var(--g3);border-radius:0 8px 8px 0;padding:9px 13px;margin:8px 0;font-size:13px;}
+.chart-wrap{background:var(--cream);border:1px solid var(--bd);border-radius:11px;padding:13px;margin:9px 0;}
+.ctitle{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--g2);margin-bottom:9px;}
+.cbox{position:relative;height:220px;}
+.tbl-outer{margin:9px 0;}
+.ttitle{font-size:10px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:var(--g2);margin-bottom:5px;}
+.tbl-wrap{overflow-x:auto;border-radius:9px;border:1px solid var(--bd);}
+table.rt{width:100%;border-collapse:collapse;font-size:12px;}
+table.rt thead tr{background:var(--g6);}
+table.rt th{padding:8px 11px;text-align:left;font-size:10px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:var(--g1);white-space:nowrap;}
+table.rt td{padding:7px 11px;border-bottom:1px solid var(--bd);color:var(--char);vertical-align:middle;}
+table.rt tr:last-child td{border-bottom:none;}
+table.rt tr:hover td{background:rgba(216,243,220,.35);}
+.pill{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10.5px;font-weight:600;}
+.pg{background:var(--g6);color:var(--g1);}
+.pa{background:#FEF3C7;color:#92400E;}
+.pr{background:#FEE2E2;color:#991B1B;}
+.sbar-row{display:flex;align-items:center;gap:6px;}
+.sbar{height:6px;border-radius:3px;flex-shrink:0;}
+.typing{display:flex;gap:11px;align-items:flex-end;animation:mi .22s ease;}
+.tbubble{background:var(--warm);border:1px solid var(--bd);border-radius:12px;border-bottom-left-radius:3px;padding:12px 15px;display:flex;gap:5px;align-items:center;}
+.tdot{width:7px;height:7px;border-radius:50%;background:var(--g5);}
+.tdot:nth-child(1){animation:tb 1.2s ease-in-out 0s infinite;}
+.tdot:nth-child(2){animation:tb 1.2s ease-in-out .2s infinite;}
+.tdot:nth-child(3){animation:tb 1.2s ease-in-out .4s infinite;}
+@keyframes tb{0%,60%,100%{transform:translateY(0);background:var(--g5);}30%{transform:translateY(-7px);background:var(--g2);}}
+.input-zone{padding:13px 30px 18px;background:var(--cream);border-top:1px solid var(--bd);flex-shrink:0;}
+.input-row{display:flex;align-items:flex-end;gap:9px;background:var(--warm);border:1.5px solid var(--bd2);border-radius:12px;padding:9px 9px 9px 15px;box-shadow:var(--sh);transition:border-color .2s,box-shadow .2s;}
+.input-row:focus-within{border-color:var(--g3);box-shadow:0 0 0 3px rgba(64,145,108,.1);}
+#user-input{flex:1;background:transparent;border:none;outline:none;resize:none;font-family:'DM Sans',sans-serif;font-size:13.5px;color:var(--char);line-height:1.5;min-height:22px;max-height:110px;overflow-y:auto;}
+#user-input::placeholder{color:var(--ls);}
+.send-btn{width:35px;height:35px;border-radius:9px;background:var(--g2);border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .17s;}
+.send-btn:hover{background:var(--g3);transform:scale(1.05);}
+.send-btn:active{transform:scale(.95);}
+.send-btn svg{width:16px;height:16px;fill:white;}
+.input-hint{font-size:10px;color:var(--ls);text-align:center;margin-top:6px;}
+.notice-bar{display:none;align-items:center;gap:8px;background:#FEF3C7;border:1px solid #FCD34D;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400E;margin-bottom:9px;}
+.modal-ov{position:fixed;inset:0;background:rgba(15,15,16,.52);backdrop-filter:blur(5px);z-index:9999;display:none;align-items:center;justify-content:center;}
+.modal-ov.open{display:flex;}
+.modal-box{background:var(--warm);border-radius:18px;width:430px;max-width:calc(100vw - 32px);padding:34px 30px 26px;box-shadow:0 24px 60px rgba(0,0,0,.2);animation:su .22s ease;}
+@keyframes su{from{transform:translateY(14px);opacity:0;}to{transform:translateY(0);opacity:1;}}
+.mlogo{display:flex;align-items:center;gap:10px;margin-bottom:18px;}
+.mlmark{width:33px;height:33px;border-radius:8px;background:linear-gradient(135deg,var(--g1),var(--g3));display:flex;align-items:center;justify-content:center;}
+.mlmark svg{width:17px;height:17px;fill:white;}
+.mlname{font-family:'Playfair Display',serif;font-size:16px;font-weight:700;color:var(--g1);}
+.mlsub{font-size:9px;font-weight:600;letter-spacing:.13em;text-transform:uppercase;color:var(--ls);display:block;}
+.modal-box h2{font-family:'Playfair Display',serif;font-size:19px;font-weight:700;color:var(--char);margin-bottom:6px;}
+.mdesc{font-size:13px;color:var(--slate);line-height:1.6;margin-bottom:18px;}
+.mdesc a{color:var(--g2);text-decoration:none;font-weight:500;}
+.kw{position:relative;margin-bottom:13px;}
+.kw input{width:100%;padding:11px 42px 11px 13px;background:var(--cream);border:1.5px solid var(--bd2);border-radius:9px;font-family:'DM Mono',monospace;font-size:12.5px;color:var(--char);outline:none;transition:border-color .18s;}
+.kw input:focus{border-color:var(--g3);box-shadow:0 0 0 3px rgba(64,145,108,.1);}
+.kw input::placeholder{font-family:'DM Sans',sans-serif;letter-spacing:0;color:var(--ls);}
+.eye-btn{position:absolute;right:11px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;color:var(--ls);display:flex;transition:color .14s;}
+.eye-btn:hover{color:var(--g2);}
+.eye-btn svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:2;}
+.msave{width:100%;padding:11px;border:none;border-radius:9px;background:linear-gradient(135deg,var(--g1),var(--g3));color:white;font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;cursor:pointer;box-shadow:0 4px 12px rgba(27,67,50,.25);transition:all .2s;}
+.msave:hover{transform:translateY(-1px);}
+.mnote{font-size:11px;color:var(--ls);text-align:center;margin-top:10px;}
+</style>
+</head>
+<body>
+
+<div class="modal-ov" id="key-modal">
+  <div class="modal-box">
+    <div class="mlogo">
+      <div class="mlmark"><svg viewBox="0 0 24 24"><path d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-4.5-6.72-5.5-7.52-5.5-4.5 0-7.51 3.03-7.51 5.5v5h15.03v-5z"/></svg></div>
+      <div><span class="mlname">FLIK</span><span class="mlsub">Survey Intelligence</span></div>
+    </div>
+    <h2>Connect Your AI</h2>
+    <p class="mdesc">Enter your Anthropic API key. Stored in memory only for this session.<br><br>Get a key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></p>
+    <div class="kw">
+      <input type="password" id="api-key-input" placeholder="sk-ant-api03-..." autocomplete="off">
+      <button class="eye-btn" onclick="toggleEye()"><svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    </div>
+    <button class="msave" onclick="saveKey()">Save &amp; Connect</button>
+    <p class="mnote">Key is cleared when you close this tab.</p>
+  </div>
+</div>
+
+<header>
+  <div class="logo">
+    <div class="lmark"><svg viewBox="0 0 24 24"><path d="M18.06 22.99h1.66c.84 0 1.53-.64 1.63-1.46L23 5.05h-5V1h-1.97v4.05h-4.97l.3 2.34c1.71.47 3.31 1.32 4.27 2.26 1.44 1.42 2.43 2.89 2.43 5.29v8.05zM1 21.99V21h15.03v.99c0 .55-.45 1-1.01 1H2.01c-.56 0-1.01-.45-1.01-1zm15.03-7c0-4.5-6.72-5.5-7.52-5.5-4.5 0-7.51 3.03-7.51 5.5v5h15.03v-5z"/></svg></div>
+    <div class="ltext"><span class="brand">FLIK</span><span class="sub">Survey Intelligence</span></div>
+  </div>
+  <div class="hact">
+    <div class="badge"><div class="pdot"></div>AI Analyst</div>
+    <button class="hbtn" onclick="document.getElementById('csv-file').click()">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Upload CSV
+    </button>
+    <button class="hbtn" id="key-btn" onclick="showModal()">
+      <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      <span id="key-label">Set API Key</span>
+    </button>
+    <button class="hbtn" onclick="clearChat()">
+      <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
+      New Chat
+    </button>
+    <input type="file" id="csv-file" accept=".csv" onchange="handleCSV(this)">
+  </div>
+</header>
+
+<div class="app">
+  <aside>
+    <div class="aside-scroll">
+      <span class="slabel">Quick Analysis</span>
+      <button class="qchip" onclick="ask('Executive summary: portfolio health, unit ranking table, top complaint categories chart')"><div class="qi ig">&#128203;</div><span class="qt">Executive summary + unit ranking</span></button>
+      <button class="qchip" onclick="ask('Show CSAT scores by unit ranked best to worst as a bar chart with confidence tiers')"><div class="qi ib">&#128202;</div><span class="qt">CSAT by unit - ranked bar chart</span></button>
+      <button class="qchip" onclick="ask('Top complaint categories: show as a chart and explain which units are driving them')"><div class="qi ia">&#9888;</div><span class="qt">Top complaints chart + analysis</span></button>
+      <button class="qchip" onclick="ask('Which unit is most at risk? Detailed operational diagnosis with evidence')"><div class="qi ir">&#128680;</div><span class="qt">Most at-risk unit - full diagnosis</span></button>
+      <button class="qchip" onclick="ask('Portfolio health: how many units are thriving, neutral, or at-risk?')"><div class="qi ip">&#128202;</div><span class="qt">Portfolio health distribution</span></button>
+      <button class="qchip" onclick="ask('Full unit comparison table with weighted scores, response counts, confidence, and NPS')"><div class="qi ib">&#128203;</div><span class="qt">Full unit comparison table</span></button>
+      <div class="sdiv"></div>
+      <span class="slabel">Unit Deep Dive</span>
+      <input type="text" class="usearch" id="unit-search" placeholder="Search unit name or SAP#..." oninput="filterUnits(this.value)">
+      <div class="ulist" id="unit-list"></div>
+      <div class="sdiv"></div>
+      <span class="slabel">Deeper Insights</span>
+      <button class="qchip" onclick="ask('Which survey question types score lowest on average? Ranked table with weighted scores and sample sizes')"><div class="qi ia">&#10067;</div><span class="qt">Lowest-scoring question types</span></button>
+      <button class="qchip" onclick="ask('Sentiment breakdown per unit: promoters vs detractors percentage')"><div class="qi ip">&#128208;</div><span class="qt">Promoter vs detractor breakdown</span></button>
+      <button class="qchip" onclick="ask('Tailored improvement recommendations for bottom-ranked units, noting data confidence for each')"><div class="qi ig">&#127919;</div><span class="qt">Improvement plan - at-risk units</span></button>
+    </div>
+    <div class="stats-box">
+      <h4>Dataset Overview</h4>
+      <div class="srow"><span class="slbl">Survey Months</span><span class="sval" id="st-rows">-</span></div>
+      <div class="srow"><span class="slbl">Responses</span><span class="sval" id="st-resp">-</span></div>
+      <div class="srow"><span class="slbl">Units</span><span class="sval" id="st-units">-</span></div>
+      <div class="srow"><span class="slbl">Rankable (5+)</span><span class="sval" id="st-rank">-</span></div>
+      <div class="srow"><span class="slbl">Wtd CSAT Avg</span><span class="sval" id="st-avg">-</span></div>
+      <div class="srow"><span class="slbl">Source</span><span class="sval" id="st-src">DEMO</span></div>
+    </div>
+  </aside>
+
+  <main>
+    <div id="messages">
+      <div class="welcome" id="welcome">
+        <div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>
+        <h2>FLIK Survey Intelligence</h2>
+        <p>Weighted analytics, confidence-aware rankings, charts built from your survey data.</p>
+        <div class="wchips">
+          <button class="wchip" onclick="ask('Full executive summary with portfolio health, unit ranking, and top issues')">Full dashboard</button>
+          <button class="wchip" onclick="ask('Show CSAT scores by unit as a bar chart')">CSAT by unit</button>
+          <button class="wchip" onclick="ask('Which unit is most at risk right now?')">Most at-risk</button>
+          <button class="wchip" onclick="ask('Show all units with weighted scores and confidence tiers')">Unit directory</button>
+        </div>
+      </div>
+    </div>
+    <div class="input-zone">
+      <div class="notice-bar" id="notice-bar">Running on demo data - upload survey_responses.csv for live analysis.</div>
       <div class="input-row">
         <textarea id="user-input" placeholder="Ask about a unit by name or SAP#, request charts, tables, weighted analysis..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="send-btn" onclick="sendMsg()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
@@ -236,7 +502,7 @@ var PAL = ['#2D6A4F','#40916C','#52B788','#E9C46A','#E76F51','#60A5FA','#95D5B2'
 
 var DATA = [];
 var chatHistory = [];
-// AI handled via Snowflake Cortex server-side
+var API_KEY = '';
 var customData = false;
 var chartCounter = 0;
 var chartReg = {};
@@ -268,155 +534,99 @@ function confTier(n) {
 }
 
 function runAnalytics() {
-  // DATA is now pre-aggregated monthly rows from server:
-  // { unit_key, unit_name, unit_sap, month, responses, avg_csat,
-  //   neg_count, pos_count, det_count, score_count, top_issues }
   if (!DATA || !DATA.length) {
-    return { unitStats:[], gMean:3.0, topReasons:[], qStats:[],
-      totalRows:0, uniqueResponses:0, uniqueUnits:0,
-      rankable:0, reliable:0, minDate:'', maxDate:'', hasDateData:false };
+    return {unitStats:[],gMean:3.0,topReasons:[],qStats:[],
+      totalRows:0,uniqueResponses:0,uniqueUnits:0,
+      rankable:0,reliable:0,minDate:'',maxDate:'',hasDateData:false};
   }
-
-  var units   = {};   // key -> unit accumulator
-  var reasons = {};   // reason -> total count across portfolio
-  var allWeightedScores = [];
-  var allMonths = [];
-
-  for (var ri = 0; ri < DATA.length; ri++) {
-    var r       = DATA[ri];
-    var key     = String(r.unit_key   || r.unit_name || 'Unknown');
-    var uName   = String(r.unit_name  || '');
-    var uSap    = String(r.unit_sap   || '');
-    var month   = String(r.month      || '');
-    var n       = parseInt(r.responses)   || 0;
-    var avg     = parseFloat(r.avg_csat)  || 0;
-    var negC    = parseInt(r.neg_count)   || 0;
-    var posC    = parseInt(r.pos_count)   || 0;
-    var detC    = parseInt(r.det_count)   || 0;
-    var scoreC  = parseInt(r.score_count) || 0;
-    var issues  = String(r.top_issues || '');
-
+  var units={}, reasons={}, allMonths=[];
+  for (var ri=0; ri<DATA.length; ri++) {
+    var r=DATA[ri];
+    var key   = String(r.unit_key   || r.unit_name || 'Unknown');
+    var uName = String(r.unit_name  || '');
+    var uSap  = String(r.unit_sap   || '');
+    var month = String(r.month      || '');
+    var n     = parseInt(r.responses)   || 0;
+    var avg   = parseFloat(r.avg_csat)  || 0;
+    var negC  = parseInt(r.neg_count)   || 0;
+    var posC  = parseInt(r.pos_count)   || 0;
+    var detC  = parseInt(r.det_count)   || 0;
+    var scoreC= parseInt(r.score_count) || 0;
+    var issues= String(r.top_issues || '');
     if (!units[key]) {
-      units[key] = {
-        name: uName, sap: uSap,
-        totalResponses: 0, totalScoreCount: 0,
-        weightedSum: 0,   // sum of (n * avg) for weighted average
-        negCount: 0, posCount: 0, detCount: 0,
-        monthlyData: [],  // [{month, avg, n}] for trend
-        issueMap: {},
-        months: []
-      };
+      units[key]={name:uName,sap:uSap,totalResponses:0,totalScoreCount:0,
+        weightedSum:0,negCount:0,posCount:0,detCount:0,
+        monthlyData:[],issueMap:{},months:[],_issuesParsed:false};
     }
-
-    var u = units[key];
-    if (uName && (!u.name || u.name === key)) u.name = uName;
-
+    var u=units[key];
+    if (uName && (!u.name || u.name===key)) u.name=uName;
     u.totalResponses  += n;
     u.totalScoreCount += scoreC;
-    u.weightedSum     += avg * scoreC; // weighted by score count for accurate avg
-    u.negCount        += negC;
-    u.posCount        += posC;
-    u.detCount        += detC;
-    if (month) {
-      u.monthlyData.push({ month:month, avg:avg, n:n });
-      u.months.push(month);
-      allMonths.push(month);
-    }
-
-    // Parse top_issues string: "Food Quality:669|Speed of Service:534"
-    // Only parse issues ONCE per unit (from first row) - server already totals across all months
+    u.weightedSum     += avg*scoreC;
+    u.negCount+=negC; u.posCount+=posC; u.detCount+=detC;
+    if (month) { u.monthlyData.push({month:month,avg:avg,n:n}); u.months.push(month); allMonths.push(month); }
     if (issues && !u._issuesParsed) {
-      u._issuesParsed = true;
-      issues.split('|').forEach(function(part) {
-        var bits = part.split(':');
-        if (bits.length >= 2) {
-          var rName = bits[0].trim();
-          var rCnt  = parseInt(bits[bits.length-1]) || 1;
-          if (rName) {
-            u.issueMap[rName] = (u.issueMap[rName] || 0) + rCnt;
-            reasons[rName]    = (reasons[rName]    || 0) + rCnt;
-          }
+      u._issuesParsed=true;
+      issues.split('|').forEach(function(part){
+        var bits=part.split(':');
+        if (bits.length>=2){
+          var rName=bits[0].trim(), rCnt=parseInt(bits[bits.length-1])||1;
+          if (rName){u.issueMap[rName]=(u.issueMap[rName]||0)+rCnt; reasons[rName]=(reasons[rName]||0)+rCnt;}
         }
       });
     }
   }
-
-  // Compute global mean across all units (weighted by responses)
-  var totalWeightedSum = 0, totalScores = 0;
-  Object.keys(units).forEach(function(k) {
-    totalWeightedSum += units[k].weightedSum;
-    totalScores      += units[k].totalScoreCount;
-  });
-  var gMean = totalScores ? totalWeightedSum / totalScores : 3.0;
-
-  // Build unitStats array
-  var unitStats = [];
-  Object.keys(units).forEach(function(key) {
-    var u       = units[key];
-    var n       = u.totalResponses;
-    var rawAvg  = u.totalScoreCount ? u.weightedSum / u.totalScoreCount : 0;
-    var wScore  = rawAvg ? bayesian(rawAvg, n, gMean) : gMean;
-    var total   = u.totalScoreCount;
-    function pct(x,t) { return t ? +(x/t*100).toFixed(1) : 0; }
-    var negRate = pct(u.negCount, total);
-    var posRate = pct(u.posCount, total);
-    var nps     = Math.round(posRate - pct(u.detCount, total));
-    var topReasons = Object.keys(u.issueMap)
-      .map(function(r){ return [r, u.issueMap[r]]; })
-      .sort(function(a,b){ return b[1]-a[1]; })
-      .slice(0,10);
-    var conf = confTier(n);
-    var sortedMonths = u.months.slice().sort();
-    // Build scoresByDate for trend functions (one entry per month using avg as representative score)
-    var scoresByDate = u.monthlyData.map(function(md) {
-      return { date: md.month + '-15', score: md.avg, n: md.n };
-    });
+  var totalWS=0,totalSC=0;
+  Object.keys(units).forEach(function(k){totalWS+=units[k].weightedSum; totalSC+=units[k].totalScoreCount;});
+  var gMean=totalSC?totalWS/totalSC:3.0;
+  var unitStats=[];
+  Object.keys(units).forEach(function(key){
+    var u=units[key], n=u.totalResponses;
+    var rawAvg=u.totalScoreCount?u.weightedSum/u.totalScoreCount:0;
+    var wScore=rawAvg?bayesian(rawAvg,n,gMean):gMean;
+    var total=u.totalScoreCount;
+    function pct(x,t){return t?+(x/t*100).toFixed(1):0;}
+    var topReasons=Object.keys(u.issueMap).map(function(r){return[r,u.issueMap[r]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,10);
+    var conf=confTier(n);
+    var sm=u.months.slice().sort();
+    var scoresByDate=u.monthlyData.map(function(md){return{date:md.month+'-15',score:md.avg,n:md.n};});
     unitStats.push({
-      key:key, name:u.name, sap:u.sap,
-      rawAvg:+rawAvg.toFixed(2), wScore:+wScore.toFixed(2),
-      responses:n, totalRows:n,
-      negRate:negRate, posRate:posRate, nps:nps,
-      topReasons:topReasons, conf:conf,
-      rankable:n >= MIN_RANK, reliable:n >= MIN_RELIABLE,
-      minDate: sortedMonths.length ? sortedMonths[0] : '',
-      maxDate: sortedMonths.length ? sortedMonths[sortedMonths.length-1] : '',
-      monthlyData: u.monthlyData.sort(function(a,b){ return a.month > b.month ? 1 : -1; }),
-      scoresByDate: scoresByDate
+      key:key,name:u.name,sap:u.sap,
+      rawAvg:+rawAvg.toFixed(2),wScore:+wScore.toFixed(2),
+      responses:n,totalRows:n,
+      negRate:pct(u.negCount,total),posRate:pct(u.posCount,total),
+      nps:Math.round(pct(u.posCount,total)-pct(u.detCount,total)),
+      topReasons:topReasons,conf:conf,
+      rankable:n>=MIN_RANK,reliable:n>=MIN_RELIABLE,
+      minDate:sm.length?sm[0]:'',maxDate:sm.length?sm[sm.length-1]:'',
+      monthlyData:u.monthlyData.slice().sort(function(a,b){return a.month>b.month?1:-1;}),
+      scoresByDate:scoresByDate
     });
   });
-
-  unitStats.sort(function(a,b){ return b.wScore - a.wScore; });
-  var topReasons = Object.keys(reasons)
-    .map(function(r){ return [r, reasons[r]]; })
-    .sort(function(a,b){ return b[1]-a[1]; });
-  var allMonthsSorted = allMonths.slice().sort();
-
+  unitStats.sort(function(a,b){return b.wScore-a.wScore;});
+  var topReasons=Object.keys(reasons).map(function(r){return[r,reasons[r]];}).sort(function(a,b){return b[1]-a[1];});
+  var ams=allMonths.slice().sort();
   return {
-    unitStats:    unitStats,
-    gMean:        +gMean.toFixed(2),
-    topReasons:   topReasons,
-    qStats:       [],
-    totalRows:    DATA.length,
-    uniqueResponses: unitStats.reduce(function(s,u){ return s+u.responses; }, 0),
-    uniqueUnits:  unitStats.length,
-    rankable:     unitStats.filter(function(u){ return u.rankable; }).length,
-    reliable:     unitStats.filter(function(u){ return u.reliable; }).length,
-    minDate:      allMonthsSorted.length ? allMonthsSorted[0] : '',
-    maxDate:      allMonthsSorted.length ? allMonthsSorted[allMonthsSorted.length-1] : '',
-    hasDateData:  allMonthsSorted.length > 0
+    unitStats:unitStats,gMean:+gMean.toFixed(2),topReasons:topReasons,qStats:[],
+    totalRows:DATA.length,
+    uniqueResponses:unitStats.reduce(function(s,u){return s+u.responses;},0),
+    uniqueUnits:unitStats.length,
+    rankable:unitStats.filter(function(u){return u.rankable;}).length,
+    reliable:unitStats.filter(function(u){return u.reliable;}).length,
+    minDate:ams.length?ams[0]:'',maxDate:ams.length?ams[ams.length-1]:'',
+    hasDateData:ams.length>0
   };
 }
 function refreshStats() {
   var a = runAnalytics();
-  // Show unique months of data, not raw aggregated row count
   var uniqueMonths = {};
-  for (var i = 0; i < DATA.length; i++) { if (DATA[i].month) uniqueMonths[DATA[i].month] = 1; }
+  for (var i=0; i<DATA.length; i++){if(DATA[i].month)uniqueMonths[DATA[i].month]=1;}
   document.getElementById('st-rows').textContent  = Object.keys(uniqueMonths).length + ' months';
   document.getElementById('st-resp').textContent  = a.uniqueResponses.toLocaleString();
   document.getElementById('st-units').textContent = a.uniqueUnits;
   document.getElementById('st-rank').textContent  = a.rankable + ' / ' + a.uniqueUnits;
   document.getElementById('st-avg').textContent   = a.gMean ? a.gMean + '/5' : '-';
-  document.getElementById('st-src').textContent   = customData ? 'LIVE' : 'DEMO';
+  document.getElementById('st-src').textContent   = customData ? 'CSV' : 'DEMO';
   renderUnitList('');
 }
 
@@ -560,129 +770,107 @@ function handleCSV(input) {
   input.value = '';
 }
 
-// Classify query intent - determines what visuals to show
 function classifyQuery(q) {
-  var ql = q.toLowerCase();
-  var hasUnit   = !!findUnit(q, runAnalytics().unitStats);
-  var isDeep    = hasUnit || /deep.?dive|tell me about|how is|analysis for/.test(ql);
-  var isRank    = !hasUnit && /rank|ranking|compar|best unit|worst unit|top unit|bottom unit|all unit|list unit|show unit|table of unit/.test(ql);
-  var isIssue   = !hasUnit && /complaint|reason|issue|problem|categor|feedback|what are people|common/.test(ql);
-  var isHealth  = !hasUnit && /health|portfolio|overview|executive|summary|dashboard|how many thriv|how many at.risk/.test(ql);
-  var isDate    = /date|week|month|year|trend|over time|change|spike|decline|when|recent|last|since|period|2024|2025|2026|distribution|timeline|history|quarter/.test(ql);
-  var isConversational = /why|explain|what does|what is|how does|tell me|describe|what happened|can you|should i|what should/.test(ql);
-  // Pure conversational questions don't need charts
-  if (isConversational && !isDeep && !isRank && !isHealth) return {type:'conversational', hasUnit:hasUnit, isDate:isDate};
-  if (isDeep)   return {type:'unit',    hasUnit:hasUnit, isDate:isDate};
-  if (isRank)   return {type:'ranking', hasUnit:false,   isDate:isDate};
-  if (isIssue)  return {type:'issues',  hasUnit:false,   isDate:isDate};
-  if (isHealth) return {type:'health',  hasUnit:false,   isDate:isDate};
-  return        {type:'health',  hasUnit:false,   isDate:isDate};
+  var ql=q.toLowerCase();
+  var a2=runAnalytics();
+  var hasUnit=!!findUnit(q, a2.unitStats);
+  var isDeep=hasUnit||/deep.?dive|tell me about|how is|analysis for/.test(ql);
+  var isRank=!hasUnit&&/rank|ranking|compar|best unit|worst unit|top unit|bottom unit|all unit|list unit|show unit|table of unit/.test(ql);
+  var isIssue=!hasUnit&&/complaint|reason|issue|problem|categor|feedback|what are people|common/.test(ql);
+  var isHealth=!hasUnit&&/health|portfolio|overview|executive|summary|dashboard|how many thriv|how many at.?risk/.test(ql);
+  var isDate=/date|week|month|year|trend|over time|change|spike|decline|when|recent|last|since|period|2024|2025|2026|distribution|timeline|history|quarter/.test(ql);
+  var isConv=/why|explain|what does|what is|how does|tell me|describe|what happened|can you|should i|what should/.test(ql);
+  if (isConv && !isDeep && !isRank && !isHealth) return {type:'conversational',hasUnit:hasUnit,isDate:isDate};
+  if (isDeep)   return {type:'unit',    hasUnit:hasUnit,isDate:isDate};
+  if (isRank)   return {type:'ranking', hasUnit:false,  isDate:isDate};
+  if (isIssue)  return {type:'issues',  hasUnit:false,  isDate:isDate};
+  if (isHealth) return {type:'health',  hasUnit:false,  isDate:isDate};
+  return          {type:'health',  hasUnit:false,  isDate:isDate};
 }
 
 function buildVisuals(query, a) {
-  pendingCharts = []; pendingTables = [];
-  var intent = classifyQuery(query);
+  pendingCharts=[]; pendingTables=[];
+  var intent=classifyQuery(query);
+  if (intent.type==='conversational') return;
 
-  // No visuals for conversational/follow-up questions
-  if (intent.type === 'conversational') return;
-
-  // Unit deep-dive
-  if (intent.type === 'unit') {
-    var tu = findUnit(query, a.unitStats);
-    if (!tu) return; // Don't fall back to first unit - show no charts if unit not found
-    if (tu.topReasons.length >= 2) {
-      pendingCharts.push({title:'Feedback Breakdown - ' + tu.name, type:'doughnut',
-        labels: tu.topReasons.slice(0,8).map(function(x){return x[0];}),
-        datasets:[{label:'Mentions', data:tu.topReasons.slice(0,8).map(function(x){return x[1];}),
+  if (intent.type==='unit') {
+    var tu=findUnit(query, a.unitStats);
+    if (!tu) return;
+    if (tu.topReasons.length>=2) {
+      pendingCharts.push({title:'Feedback Breakdown - '+tu.name,type:'doughnut',
+        labels:tu.topReasons.slice(0,8).map(function(x){return x[0];}),
+        datasets:[{label:'Mentions',data:tu.topReasons.slice(0,8).map(function(x){return x[1];}),
           colors:['#E76F51','#F4A261','#E9C46A','#52B788','#60A5FA','#A78BFA','#95D5B2','#1B4332']}]
       });
     }
-    pendingCharts.push({title:tu.name + ' vs Portfolio', type:'bar',
+    pendingCharts.push({title:tu.name+' vs Portfolio',type:'bar',
       labels:['Raw CSAT','Weighted Score','Portfolio Mean'],
-      datasets:[{label:'Score /5', data:[tu.rawAvg, tu.wScore, a.gMean],
-        colors:[tu.rawAvg >= a.gMean ? '#40916C':'#E76F51', tu.wScore >= a.gMean ? '#2D6A4F':'#E76F51','#E9C46A']}]
+      datasets:[{label:'Score /5',data:[tu.rawAvg,tu.wScore,a.gMean],
+        colors:[tu.rawAvg>=a.gMean?'#40916C':'#E76F51',tu.wScore>=a.gMean?'#2D6A4F':'#E76F51','#E9C46A']}]
     });
-    var tot = tu.topReasons.reduce(function(s,x){return s+x[1];},0);
-    pendingTables.push({
-      title:'Issue Breakdown - ' + tu.name + ' (n=' + tu.responses + ', ' + tu.conf.label + ' confidence)',
-      headers:['Feedback Category','Mentions','% of Feedback'], scoreCol:-1,
-      rows:tu.topReasons.map(function(x){return [x[0], x[1], tot?(x[1]/tot*100).toFixed(1)+'%':'-'];})
-    });
-    return;
-  }
-
-  // Rankings - table only, no chart for every single unit (too cluttered)
-  if (intent.type === 'ranking') {
-    var rankable = a.unitStats.filter(function(u){return u.rankable;});
-    var excl = a.unitStats.filter(function(u){return !u.rankable;}).length;
-    // Chart for top 20 only - not all 300+ units
-    var chartUnits = rankable.slice(0, 20);
-    pendingCharts.push({title:'Top 20 Units by Weighted CSAT', type:'horizontalBar',
-      labels: chartUnits.map(function(u){return u.name.length>28?u.name.slice(0,26)+'..':u.name;}),
-      datasets:[{label:'Weighted Score', data:chartUnits.map(function(u){return u.wScore;}),
-        colors:chartUnits.map(function(u){return u.wScore>=4?'#2D6A4F':u.wScore>=3?'#E9C46A':'#E76F51';})}]
-    });
-    pendingTables.push({
-      title:'Full Unit Performance Ranking' + (excl?' ('+excl+' excluded: n<'+MIN_RANK+')':''),
-      headers:['#','Unit','SAP','Responses','Raw Avg','Wtd Score','Neg%','NPS','Confidence'],
-      scoreCol:5,
-      rows:rankable.map(function(u,i){return [
-        i+1, u.name.length>30?u.name.slice(0,28)+'..':u.name,
-        u.sap||'-', u.responses, u.rawAvg, u.wScore,
-        u.negRate+'%', (u.nps>0?'+':'')+u.nps, u.conf.label
-      ];})
+    var tot=tu.topReasons.reduce(function(s,x){return s+x[1];},0);
+    pendingTables.push({title:'Issue Breakdown - '+tu.name+' (n='+tu.responses+', '+tu.conf.label+' confidence)',
+      headers:['Feedback Category','Mentions','% of Feedback'],scoreCol:-1,
+      rows:tu.topReasons.map(function(x){return[x[0],x[1],tot?(x[1]/tot*100).toFixed(1)+'%':'-'];})
     });
     return;
   }
 
-  // Issues/complaints
-  if (intent.type === 'issues') {
-    var top = a.topReasons.slice(0,15);
-    var total = top.reduce(function(s,x){return s+x[1];},0);
-    pendingCharts.push({title:'Top Feedback Categories - Portfolio Wide', type:'bar',
+  if (intent.type==='ranking') {
+    var rankable=a.unitStats.filter(function(u){return u.rankable;});
+    var excl=a.unitStats.filter(function(u){return !u.rankable;}).length;
+    var top20=rankable.slice(0,20);
+    pendingCharts.push({title:'Top 20 Units by Weighted CSAT',type:'horizontalBar',
+      labels:top20.map(function(u){return u.name.length>28?u.name.slice(0,26)+'..':u.name;}),
+      datasets:[{label:'Weighted Score',data:top20.map(function(u){return u.wScore;}),
+        colors:top20.map(function(u){return u.wScore>=4?'#2D6A4F':u.wScore>=3?'#E9C46A':'#E76F51';})}]
+    });
+    pendingTables.push({
+      title:'Full Unit Performance Ranking'+(excl?' ('+excl+' excluded: n<'+MIN_RANK+')':''),
+      headers:['#','Unit','SAP','Responses','Wtd Score','Neg%','NPS','Confidence'],scoreCol:4,
+      rows:rankable.map(function(u,i){return[i+1,u.name.length>30?u.name.slice(0,28)+'..':u.name,
+        u.sap||'-',u.responses,u.wScore,u.negRate+'%',(u.nps>0?'+':'')+u.nps,u.conf.label];})
+    });
+    return;
+  }
+
+  if (intent.type==='issues') {
+    var top=a.topReasons.slice(0,15);
+    var total=top.reduce(function(s,x){return s+x[1];},0);
+    pendingCharts.push({title:'Top Feedback Categories - Portfolio Wide',type:'bar',
       labels:top.map(function(x){return x[0].length>22?x[0].slice(0,20)+'..':x[0];}),
-      datasets:[{label:'Mentions', data:top.map(function(x){return x[1];}),
+      datasets:[{label:'Mentions',data:top.map(function(x){return x[1];}),
         colors:top.map(function(_,i){return PAL[i%PAL.length];})}]
     });
     pendingTables.push({title:'Feedback Category Analysis',
-      headers:['Category','Total Mentions','% of Total'], scoreCol:-1,
-      rows:top.map(function(x){return [x[0], x[1], total?(x[1]/total*100).toFixed(1)+'%':'-'];})
+      headers:['Category','Total Mentions','% of Total'],scoreCol:-1,
+      rows:top.map(function(x){return[x[0],x[1],total?(x[1]/total*100).toFixed(1)+'%':'-'];})
     });
     return;
   }
 
-  // Portfolio health / executive summary / default
-  var tG = 0, tN = 0, tR = 0;
-  for (var ii = 0; ii < a.unitStats.length; ii++) {
-    var ws = a.unitStats[ii].wScore;
-    if (ws >= 4) tG++; else if (ws >= 3) tN++; else tR++;
-  }
-  pendingCharts.push({title:'Portfolio Health Distribution', type:'doughnut',
+  var tG=0,tN=0,tR=0;
+  for (var ii=0; ii<a.unitStats.length; ii++){var ws=a.unitStats[ii].wScore; if(ws>=4)tG++;else if(ws>=3)tN++;else tR++;}
+  pendingCharts.push({title:'Portfolio Health Distribution',type:'doughnut',
     labels:['Thriving (4.0+)','Neutral (3.0-3.9)','At-Risk (<3.0)'],
-    datasets:[{label:'Units', data:[tG,tN,tR], colors:['#40916C','#E9C46A','#E76F51']}]
+    datasets:[{label:'Units',data:[tG,tN,tR],colors:['#40916C','#E9C46A','#E76F51']}]
   });
-  var top8R = a.topReasons.slice(0,8);
-  pendingCharts.push({title:'Top 8 Portfolio-Wide Issues', type:'bar',
+  var top8R=a.topReasons.slice(0,8);
+  pendingCharts.push({title:'Top 8 Portfolio-Wide Issues',type:'bar',
     labels:top8R.map(function(x){return x[0].length>20?x[0].slice(0,18)+'..':x[0];}),
-    datasets:[{label:'Mentions', data:top8R.map(function(x){return x[1];}),
+    datasets:[{label:'Mentions',data:top8R.map(function(x){return x[1];}),
       colors:['#E76F51','#F4A261','#E9C46A','#52B788','#60A5FA','#A78BFA','#95D5B2','#2D6A4F']}]
   });
-  var rbl = a.unitStats.filter(function(u){return u.rankable;}).slice(0,25);
-  var exN = a.unitStats.filter(function(u){return !u.rankable;}).length;
+  var rbl=a.unitStats.filter(function(u){return u.rankable;}).slice(0,25);
+  var exN=a.unitStats.filter(function(u){return !u.rankable;}).length;
   pendingTables.push({
-    title:'Unit Summary' + (exN?' ('+exN+' excluded: n<'+MIN_RANK+')':''),
-    headers:['Unit','SAP','Responses','Wtd Score','Neg%','NPS','Health','Confidence'],
-    scoreCol:3,
-    rows:rbl.map(function(u){return [
-      u.name.length>30?u.name.slice(0,28)+'..':u.name,
-      u.sap||'-', u.responses, u.wScore,
-      u.negRate+'%', (u.nps>0?'+':'')+u.nps,
-      u.wScore>=4?'Thriving':u.wScore>=3?'Neutral':'At-Risk',
-      u.conf.label
-    ];})
+    title:'Unit Summary'+(exN?' ('+exN+' excluded: n<'+MIN_RANK+')':''),
+    headers:['Unit','SAP','Responses','Wtd Score','Neg%','NPS','Health','Confidence'],scoreCol:3,
+    rows:rbl.map(function(u){return[u.name.length>30?u.name.slice(0,28)+'..':u.name,
+      u.sap||'-',u.responses,u.wScore,u.negRate+'%',(u.nps>0?'+':'')+u.nps,
+      u.wScore>=4?'Thriving':u.wScore>=3?'Neutral':'At-Risk',u.conf.label];})
   });
 }
-
 function renderVisuals() {
   var html = '';
   for (var i = 0; i < pendingCharts.length; i++) {
@@ -790,30 +978,41 @@ function mountCharts() {
 }
 
 function findUnit(query, unitStats) {
-  // Robust bidirectional lookup: SAP number (exact), unit name (partial), or SAP substring
+  if (!query || !unitStats || !unitStats.length) return null;
   var q = query.toLowerCase().trim();
-  var sapNum = parseInt(q.replace(/[^0-9]/g,'')) || 0;
-  // Pass 1: exact SAP match
-  for (var i = 0; i < unitStats.length; i++) {
-    if (unitStats[i].sap && unitStats[i].sap === sapNum) return unitStats[i];
-  }
-  // Pass 2: name contains query string (3+ chars)
-  if (q.length >= 3) {
+
+  // Pass 1: exact SAP match - compare as strings not integers
+  var sapM = q.match(/\b(\d{4,7})\b/);
+  if (sapM) {
     for (var i = 0; i < unitStats.length; i++) {
-      if (unitStats[i].name.toLowerCase().indexOf(q) !== -1) return unitStats[i];
+      if (String(unitStats[i].sap) === sapM[1]) return unitStats[i];
     }
   }
-  // Pass 3: SAP string appears anywhere in query
+
+  // Pass 2: unit name appears IN the query
+  for (var i = 0; i < unitStats.length; i++) {
+    var uname = unitStats[i].name.toLowerCase();
+    if (uname.length >= 4 && q.indexOf(uname) !== -1) return unitStats[i];
+  }
+
+  // Pass 3: score by matching query words against unit name
+  var words = q.split(/\s+/).filter(function(w) { return w.length >= 4; });
+  var best = null, bestScore = 0;
+  for (var i = 0; i < unitStats.length; i++) {
+    var uname = unitStats[i].name.toLowerCase();
+    var score = 0;
+    for (var wi = 0; wi < words.length; wi++) {
+      if (uname.indexOf(words[wi]) !== -1) score++;
+    }
+    if (score > bestScore) { bestScore = score; best = unitStats[i]; }
+  }
+  if (bestScore >= 1) return best;
+
+  // Pass 4: SAP anywhere in query
   for (var i = 0; i < unitStats.length; i++) {
     if (unitStats[i].sap && q.indexOf(String(unitStats[i].sap)) !== -1) return unitStats[i];
   }
-  // Pass 4: any word in query matches any word in unit name
-  var words = q.split(/\s+/).filter(function(w){ return w.length >= 3; });
-  for (var wi = 0; wi < words.length; wi++) {
-    for (var i = 0; i < unitStats.length; i++) {
-      if (unitStats[i].name.toLowerCase().indexOf(words[wi]) !== -1) return unitStats[i];
-    }
-  }
+
   return null;
 }
 
@@ -847,16 +1046,13 @@ function parseDateRange(query) {
 }
 
 function computeDateStats(unit, startDate, endDate) {
-  // Use pre-computed monthlyData filtered to date range
   if (!unit.monthlyData || !unit.monthlyData.length) return null;
-  // startDate/endDate might be YYYY-MM-DD, convert to YYYY-MM for monthly comparison
   var startM = startDate ? startDate.slice(0,7) : null;
   var endM   = endDate   ? endDate.slice(0,7)   : null;
   var filtered = unit.monthlyData.filter(function(md) {
     return (!startM || md.month >= startM) && (!endM || md.month <= endM);
   });
   if (!filtered.length) return null;
-  // Weighted average across months
   var totalN = 0, weightedSum = 0;
   filtered.forEach(function(md) { totalN += md.n; weightedSum += md.avg * md.n; });
   var avg = totalN ? weightedSum / totalN : 0;
@@ -864,7 +1060,6 @@ function computeDateStats(unit, startDate, endDate) {
 }
 
 function computeMonthlyTrend(unit) {
-  // Use pre-computed monthlyData if available
   if (unit.monthlyData && unit.monthlyData.length) {
     return unit.monthlyData.slice().sort(function(a,b){ return a.month > b.month ? 1 : -1; });
   }
@@ -874,11 +1069,9 @@ function computeMonthlyTrend(unit) {
 function buildSystem(userQuery) {
   var a = runAnalytics();
   buildVisuals(userQuery, a);
-
   var tu        = findUnit(userQuery, a.unitStats);
   var dateRange = parseDateRange(userQuery);
   var intent    = classifyQuery(userQuery);
-
   var top20    = a.unitStats.slice(0, 20);
   var bottom10 = a.unitStats.slice(-10);
   var seen = {}, featured = [];
@@ -886,11 +1079,9 @@ function buildSystem(userQuery) {
   if (tu) addU(tu);
   top20.forEach(addU);
   bottom10.forEach(addU);
-
   var totalUnits = a.uniqueUnits;
   var bottom10Keys = {};
   bottom10.forEach(function(u){ bottom10Keys[u.key]=1; });
-
   var unitLines = featured.map(function(u) {
     var tag  = bottom10Keys[u.key] && u.wScore < 3 ? '[AT-RISK]' : '';
     var base = tag + u.name.slice(0,28) + '|SAP:' + (u.sap||'?')
@@ -899,11 +1090,10 @@ function buildSystem(userQuery) {
     if (u.minDate) base += '|data:' + u.minDate + ' to ' + u.maxDate;
     if (dateRange) {
       var ps = computeDateStats(u, dateRange.start, dateRange.end);
-      if (ps) base += '|period_n:' + ps.n + '|period_avg:' + ps.avg + '|period_neg:' + ps.negRate + '%';
+      if (ps) base += '|period_n:' + ps.n + '|period_avg:' + ps.avg;
     }
     return base;
   }).join('\n');
-
   var unitFocus = '';
   if (tu) {
     unitFocus = '\nFOCUS UNIT: ' + tu.name + ' (SAP ' + (tu.sap||'?') + ')'
@@ -911,7 +1101,6 @@ function buildSystem(userQuery) {
       + ' | ' + tu.conf.label + ' confidence | neg:' + tu.negRate + '%'
       + '\nTop issues: ' + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(', ');
     if (tu.minDate) unitFocus += '\nData range: ' + tu.minDate + ' to ' + tu.maxDate;
-    // Always include full monthly trend — critical for date analysis
     var trend = computeMonthlyTrend(tu);
     if (trend.length >= 1) {
       unitFocus += '\nMonthly CSAT (month:avg:n_responses): '
@@ -920,11 +1109,10 @@ function buildSystem(userQuery) {
     if (dateRange) {
       var ps2 = computeDateStats(tu, dateRange.start, dateRange.end);
       if (ps2) unitFocus += '\nFiltered to ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + '): n=' + ps2.n + ' avg=' + ps2.avg;
-      else     unitFocus += '\nNo data found for period: ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + ')';
+      else     unitFocus += '\nNo data found for period: ' + dateRange.label;
     }
     unitFocus += '\n';
   }
-
   var dateContext = '';
   var todayStr = new Date().toISOString().slice(0,10);
   if (dateRange) {
@@ -932,9 +1120,8 @@ function buildSystem(userQuery) {
       + '\nToday: ' + todayStr
       + '\nData available: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + '\n';
   } else if (a.hasDateData) {
-    dateContext = '\nData date range: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + ' | Today: ' + todayStr + '\n';
+    dateContext = '\nData range: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + ' | Today: ' + todayStr + '\n';
   }
-
   var portfolioTrend = '';
   if (intent.isDate && !tu) {
     var byMonth2 = {};
@@ -955,13 +1142,11 @@ function buildSystem(userQuery) {
         }).join(', ') + '\n';
     }
   }
-
   var rendered  = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
     .concat(pendingTables.map(function(t,i){return 'Table '+(i+1)+': '+t.title;})).join(', ') || 'none';
   var topIssues = a.topReasons.slice(0,8).map(function(x){return x[0].slice(0,20)+':'+x[1];}).join(', ');
   var atRisk    = a.unitStats.filter(function(u){return u.wScore < 3 && u.rankable;}).length;
   var thriving  = a.unitStats.filter(function(u){return u.wScore >= 4 && u.rankable;}).length;
-
   return 'You are a senior FLIK Hospitality analytics expert at Compass Group. '
     + 'You analyse VOC survey data using Bayesian-weighted CSAT scoring. '
     + 'Formula: (n x raw + 30 x global_mean) / (n + 30). '
@@ -970,18 +1155,14 @@ function buildSystem(userQuery) {
     + 'PORTFOLIO: ' + totalUnits + ' units | ' + a.uniqueResponses.toLocaleString() + ' responses'
     + ' | weighted CSAT ' + a.gMean + '/5 | rankable:' + a.rankable
     + ' | thriving:' + thriving + ' | at-risk:' + atRisk + '\n'
-    + dateContext
-    + unitFocus
-    + portfolioTrend
+    + dateContext + unitFocus + portfolioTrend
     + '\nUNIT DATA (top 20 + bottom 10 of ' + totalUnits + ' total):\n' + unitLines + '\n\n'
     + 'Top portfolio issues: ' + topIssues + '\n'
     + 'Visuals shown: ' + rendered + '\n\n'
     + 'RULES: plain markdown only, no HTML, no code fences. '
     + 'Never reproduce data already in charts/tables. '
-    + 'For date/trend questions: use the Monthly CSAT breakdown data above -- it contains the actual month-by-month scores. Compute changes between months, identify the best and worst months, flag any spikes or declines. Always cite specific months and scores. Never say data is unavailable if Monthly CSAT breakdown is present above. '
-    + 'Cite n= and confidence for every unit claim. '
-    + 'Use display names not SAP numbers. '
-    + 'Never speculate on units with n<5. '
+    + 'For date/trend questions: use the Monthly CSAT breakdown above. Compute month-over-month changes, identify best/worst months, flag spikes/declines. Never say data unavailable if Monthly CSAT is present. '
+    + 'Cite n= for every unit claim. Use display names not SAP numbers. Never speculate on n<5. '
     + 'End with ### Key Takeaway (3-5 sentences).';
 }
 
@@ -997,13 +1178,11 @@ function sanitizeReply(raw) {
   }
   s = cleaned.join('\n');
   s = s.replace(/<style[\s\S]*?<\/style>/gi,'')
-       .replace(/<script[\s\S]*?<\/script>/gi,'')
+       .replace(/<scr'+'ipt[\s\S]*?<\/scr'+'ipt>/gi,'')
        .replace(/<!DOCTYPE[^>]*>/gi,'')
        .replace(/<html[^>]*>|<\/html>/gi,'')
        .replace(/<head[\s\S]*?<\/head>/gi,'')
-       .replace(/<body[^>]*>|<\/body>/gi,'')
-       .replace(/<[^>]+>/g,' ')
-       .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ');
+       .replace(/<body[^>]*>|<\/body>/gi,'');
   s = s.replace(/[ \t]{3,}/g,' ').replace(/\n{4,}/g,'\n\n').trim();
   return s;
 }
@@ -1015,84 +1194,35 @@ function isBadReply(s, stopReason) {
   if (s.indexOf('<!DOCTYPE') !== -1) return 'html';
   if (stopReason === 'max_tokens') return 'truncated';
   var tail = s.slice(-80).trim();
-  if (/[,:([\-]\s*$/.test(tail) && s.length > 300) return 'cutoff';
+  if (/[,:(\[\-]\s*$/.test(tail) && s.length > 300) return 'cutoff';
   return null;
 }
 
-// Server-side prompt cache hash -- avoids resending large system prompt every turn
-
-// -- RAG -- Push analytics to Snowflake UNIT_ANALYTICS table -------------------
 function refreshAnalyticsForRAG() {
   if (!customData || !DATA || DATA.length === 0) return;
   var a = runAnalytics();
   if (!a || !a.unitStats || a.unitStats.length === 0) return;
-
   fetch('/api/refresh-analytics', {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      unitStats:      a.unitStats,
-      portfolioStats: {
-        totalRows:         a.totalRows,
-        uniqueResponses:   a.uniqueResponses,
-        uniqueUnits:       a.uniqueUnits,
-        gMean:             a.gMean,
-        rankable:          a.rankable
-      }
-    })
-  }).then(function(r) {
-    return r.json().then(function(d) {
-      if (d.ok) {
-        console.log('[RAG] Analytics indexed for ' + d.units + ' units');
-      }
-    });
-  }).catch(function(e) {
-    console.warn('[RAG] Analytics refresh failed (non-critical):', e.message);
-  });
+    body: JSON.stringify({ unitStats: a.unitStats, portfolioStats: { totalRows: a.totalRows, uniqueResponses: a.uniqueResponses, uniqueUnits: a.uniqueUnits, gMean: a.gMean, rankable: a.rankable } })
+  }).then(function(r) { return r.json().then(function(d) { if (d.ok) console.log('[RAG] Indexed ' + d.units + ' units'); }); })
+  .catch(function(e) { console.warn('[RAG] Failed:', e.message); });
 }
 
 var _promptHash = null;
 
 function callAPI(messages, systemPrompt, onSuccess, onError, userQuery) {
-  var body = { messages: messages, useRag: true };
+  var body = { messages: messages, useRag: true, system: systemPrompt };
   if (userQuery) body.userQuery = userQuery;
-  // Use cached hash if available, otherwise send full system prompt
-  if (_promptHash) {
-    body.promptHash = _promptHash;
-  } else {
-    body.system = systemPrompt;
-  }
-
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function(res) {
     if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) {
-      return res.json().then(function(d) {
-        // Cache miss -- resend full prompt
-        if (d.error === 'prompt_cache_miss') {
-          _promptHash = null;
-          body = { system: systemPrompt, messages: messages };
-          return fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-          }).then(function(r2) {
-            return r2.json().then(function(d2) {
-              if (d2._promptHash) _promptHash = d2._promptHash;
-              onSuccess(d2.content && d2.content[0] ? d2.content[0].text : '', d2.stop_reason || 'end_turn');
-            });
-          });
-        }
-        onError('Server error ' + res.status + ': ' + (d.error || ''));
-      }).catch(function() {
-        res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); });
-      });
-    }
     return res.json().then(function(data) {
-      if (data._promptHash) _promptHash = data._promptHash;
+      if (!res.ok) { onError('Server error ' + res.status + ': ' + (data.error || '')); return; }
       onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn');
     });
   }).catch(function(e){ onError(e.message); });
@@ -1102,55 +1232,32 @@ function sendMsg() {
   var inp = document.getElementById('user-input');
   var text = inp.value.trim();
   if (!text) return;
-  // Auth handled server-side
   inp.value = ''; inp.style.height = '';
   addUserMsg(text);
   chatHistory.push({role:'user', content:text});
   showTyping();
   var sysPrompt = buildSystem(text);
   var vizHtml   = renderVisuals();
-  var maxRetries = 2;
-  var attempt    = 0;
-  var messages   = chatHistory.slice(-12);
-
+  var messages  = chatHistory.slice(-12);
+  var attempt   = 0;
   function tryOnce() {
     attempt++;
     callAPI(messages, sysPrompt, function(reply, stopReason) {
       var cleaned = sanitizeReply(reply);
       var bad = isBadReply(cleaned, stopReason);
-      if (!bad) {
-        removeTyping();
-        chatHistory.push({role:'assistant', content:cleaned});
-        addBotMsg(cleaned, vizHtml, false);
-        return;
-      }
-      if (attempt >= maxRetries) {
-        removeTyping();
-        var fallback = cleaned.length > 40 ? cleaned : 'Unable to generate a complete response. Please try rephrasing.';
-        chatHistory.push({role:'assistant', content:fallback});
-        addBotMsg(fallback, vizHtml, true);
-        return;
-      }
-      var correction;
-      if (bad === 'truncated' || bad === 'cutoff') {
-        correction = 'Your response was cut off. Please continue from where you stopped and finish with a Key Takeaway section. Plain markdown only, no HTML, no code fences.';
-        messages = messages.concat([{role:'assistant',content:reply},{role:'user',content:correction}]);
-      } else {
-        correction = 'Your response contained HTML or code blocks. Rewrite as plain markdown only: ### headers, **bold**, - bullets. No HTML tags.';
-        messages = [{role:'user', content:chatHistory[chatHistory.length-1].content}];
-      }
+      if (!bad) { removeTyping(); chatHistory.push({role:'assistant', content:cleaned}); addBotMsg(cleaned, vizHtml, false); return; }
+      if (attempt >= 2) { removeTyping(); var fb = cleaned.length > 40 ? cleaned : 'Unable to generate response. Try rephrasing.'; chatHistory.push({role:'assistant', content:fb}); addBotMsg(fb, vizHtml, true); return; }
+      var cor = (bad === 'truncated' || bad === 'cutoff')
+        ? 'Response cut off. Continue and finish with ### Key Takeaway. Plain markdown only.'
+        : 'Rewrite as plain markdown only. No HTML, no code fences.';
+      messages = messages.concat([{role:'assistant',content:reply},{role:'user',content:cor}]);
       tryOnce();
-    }, function(err) {
-      removeTyping();
-      addBotMsg('Error: ' + err, '', false);
-      chatHistory.pop();
-    });
+    }, function(err) { removeTyping(); addBotMsg('Error: ' + err, '', false); chatHistory.pop(); }, text);
   }
   tryOnce();
 }
 
 function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
 function nowTime() { return new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
 
 function mdToHtml(t) {
@@ -1201,30 +1308,22 @@ function showTyping() {
 }
 
 function removeTyping() { var t = document.getElementById('typ'); if (t) t.remove(); }
-
 function showModal(){} function hideModal(){} function toggleEye(){} function saveKey(){}
-
 function ask(q) { document.getElementById('user-input').value = q; sendMsg(); }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
 function autoResize(el) { el.style.height=''; el.style.height=Math.min(el.scrollHeight,110)+'px'; }
 
 function clearChat() {
-  chatHistory = [];
-  _promptHash = null;
+  chatHistory = []; _promptHash = null;
   var m = document.getElementById('messages');
   m.innerHTML = '<div class="welcome" id="welcome">'
     + '<div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>'
     + '<h2>FLIK Survey Intelligence</h2><p>Chat cleared. Ask a new question.</p>'
     + '<div class="wchips">'
     + '<button class="wchip" onclick="ask(\'Full executive summary with portfolio health, unit ranking, and top issues\')">Full dashboard</button>'
-    + '<button class="wchip" onclick="ask(\'Show CSAT scores by unit as a bar chart\')">CSAT chart</button>'
     + '<button class="wchip" onclick="ask(\'Which unit is most at risk?\')">Most at-risk</button>'
     + '</div></div>';
 }
-
-
-
-
 
 fetch('/api/me').then(function(r){
   if (r.status === 401) { window.location.href = '/login'; return null; }
@@ -1235,7 +1334,6 @@ fetch('/api/me').then(function(r){
   if (el) el.textContent = u.name || u.username || 'User';
 }).catch(function(){});
 
-// Auto-load live data from Snowflake on startup
 var nb = document.getElementById('notice-bar');
 if (nb) { nb.style.display = 'flex'; nb.textContent = 'Loading live survey data from Snowflake...'; }
 
@@ -1245,15 +1343,14 @@ fetch('/api/survey-data').then(function(r){
   return r.json();
 }).then(function(rows){
   if (!rows) return;
-  // DATA is pre-aggregated monthly rows from server
   DATA = rows;
   customData = true;
   var a2 = runAnalytics();
   refreshStats();
   var nb2 = document.getElementById('notice-bar');
   if (nb2) nb2.style.display = 'none';
-  addBotMsg('Live data loaded: ' + a2.uniqueUnits + ' units | ' + a2.uniqueResponses.toLocaleString() + ' responses | Portfolio CSAT ' + a2.gMean + '/5. What would you like to analyse?');
   refreshAnalyticsForRAG();
+  addBotMsg('Live data loaded: ' + a2.uniqueUnits + ' units | ' + a2.uniqueResponses.toLocaleString() + ' responses | Portfolio CSAT ' + a2.gMean + '/5. What would you like to analyse?');
 }).catch(function(e){
   var nb3 = document.getElementById('notice-bar');
   if (nb3) { nb3.style.display = 'flex'; nb3.textContent = 'Could not load Snowflake data: ' + e.message; }
