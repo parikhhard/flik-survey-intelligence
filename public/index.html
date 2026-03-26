@@ -229,7 +229,6 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
 
 <script>
 
-
 var CONF_C = 30;
 var MIN_RANK = 5;
 var MIN_RELIABLE = 15;
@@ -791,45 +790,478 @@ function mountCharts() {
 }
 
 function findUnit(query, unitStats) {
-  if (!query || !unitStats || !unitStats.length) return null;
+  // Robust bidirectional lookup: SAP number (exact), unit name (partial), or SAP substring
   var q = query.toLowerCase().trim();
-
-  // Pass 1: SAP number match (string comparison)
-  var sapMatch = '';
-  var sapRe = q.match(/\b(\d{4,7}[a-z]?)\b/i);
-  if (sapRe) sapMatch = sapRe[1];
-  if (sapMatch) {
+  var sapNum = parseInt(q.replace(/[^0-9]/g,'')) || 0;
+  // Pass 1: exact SAP match
+  for (var i = 0; i < unitStats.length; i++) {
+    if (unitStats[i].sap && unitStats[i].sap === sapNum) return unitStats[i];
+  }
+  // Pass 2: name contains query string (3+ chars)
+  if (q.length >= 3) {
     for (var i = 0; i < unitStats.length; i++) {
-      if (String(unitStats[i].sap).toLowerCase() === sapMatch.toLowerCase()) return unitStats[i];
+      if (unitStats[i].name.toLowerCase().indexOf(q) !== -1) return unitStats[i];
     }
   }
-
-  // Pass 2: unit name appears somewhere IN the query
-  for (var i = 0; i < unitStats.length; i++) {
-    var uname = unitStats[i].name.toLowerCase();
-    if (uname.length >= 4 && q.indexOf(uname) !== -1) return unitStats[i];
-  }
-
-  // Pass 3: score each unit by how many query words match the unit name
-  var words = q.split(/\s+/).filter(function(w) { return w.length >= 4; });
-  var best = null, bestScore = 0;
-  for (var i = 0; i < unitStats.length; i++) {
-    var uname = unitStats[i].name.toLowerCase();
-    var score = 0;
-    for (var wi = 0; wi < words.length; wi++) {
-      if (uname.indexOf(words[wi]) !== -1) score++;
-    }
-    if (score > bestScore) { bestScore = score; best = unitStats[i]; }
-  }
-  if (bestScore >= 1) return best;
-
-  // Pass 4: SAP string anywhere in query
+  // Pass 3: SAP string appears anywhere in query
   for (var i = 0; i < unitStats.length; i++) {
     if (unitStats[i].sap && q.indexOf(String(unitStats[i].sap)) !== -1) return unitStats[i];
   }
-
+  // Pass 4: any word in query matches any word in unit name
+  var words = q.split(/\s+/).filter(function(w){ return w.length >= 3; });
+  for (var wi = 0; wi < words.length; wi++) {
+    for (var i = 0; i < unitStats.length; i++) {
+      if (unitStats[i].name.toLowerCase().indexOf(words[wi]) !== -1) return unitStats[i];
+    }
+  }
   return null;
+}
+
+function parseDateRange(query) {
+  var q = query.toLowerCase();
+  var now = new Date();
+  var today = now.toISOString().slice(0,10);
+  var start = null, end = today, label = '';
+  var m;
+  if ((m = q.match(/last\s+(\d+)\s+(day|week|month|year)/))) {
+    var n = parseInt(m[1]), unit = m[2], d = new Date();
+    if (unit==='day')   d.setDate(d.getDate()-n);
+    if (unit==='week')  d.setDate(d.getDate()-n*7);
+    if (unit==='month') d.setMonth(d.getMonth()-n);
+    if (unit==='year')  d.setFullYear(d.getFullYear()-n);
+    start=d.toISOString().slice(0,10); label='last '+n+' '+unit+(n>1?'s':'');
+  } else if (/last\s+week/.test(q))  { var d2=new Date(); d2.setDate(d2.getDate()-7); start=d2.toISOString().slice(0,10); label='last 7 days'; }
+  else if (/last\s+month/.test(q))   { var d3=new Date(); d3.setMonth(d3.getMonth()-1); start=d3.toISOString().slice(0,10); label='last 30 days'; }
+  else if (/last\s+year/.test(q))    { var d4=new Date(); d4.setFullYear(d4.getFullYear()-1); start=d4.toISOString().slice(0,10); label='last 12 months'; }
+  else if (/this\s+month/.test(q))   { start=today.slice(0,7)+'-01'; label='this month'; }
+  else if (/this\s+year|ytd/.test(q)) { start=today.slice(0,4)+'-01-01'; label='year to date'; }
+  else if ((m = q.match(/\b(202[0-9])\b/))) { start=m[1]+'-01-01'; end=m[1]+'-12-31'; label='year '+m[1]; }
+  else if ((m = q.match(/past\s+(\d+)\s+(day|week|month)/))) {
+    var n2=parseInt(m[1]), unit2=m[2], d5=new Date();
+    if (unit2==='day')  d5.setDate(d5.getDate()-n2);
+    if (unit2==='week') d5.setDate(d5.getDate()-n2*7);
+    if (unit2==='month') d5.setMonth(d5.getMonth()-n2);
+    start=d5.toISOString().slice(0,10); label='past '+n2+' '+unit2+(n2>1?'s':'');
+  }
+  return start ? {start:start, end:end, label:label} : null;
+}
+
+function computeDateStats(unit, startDate, endDate) {
+  // Use pre-computed monthlyData filtered to date range
+  if (!unit.monthlyData || !unit.monthlyData.length) return null;
+  // startDate/endDate might be YYYY-MM-DD, convert to YYYY-MM for monthly comparison
+  var startM = startDate ? startDate.slice(0,7) : null;
+  var endM   = endDate   ? endDate.slice(0,7)   : null;
+  var filtered = unit.monthlyData.filter(function(md) {
+    return (!startM || md.month >= startM) && (!endM || md.month <= endM);
+  });
+  if (!filtered.length) return null;
+  // Weighted average across months
+  var totalN = 0, weightedSum = 0;
+  filtered.forEach(function(md) { totalN += md.n; weightedSum += md.avg * md.n; });
+  var avg = totalN ? weightedSum / totalN : 0;
+  return { n:totalN, avg:+avg.toFixed(2), negRate:null, monthCount:filtered.length };
+}
+
+function computeMonthlyTrend(unit) {
+  // Use pre-computed monthlyData if available
+  if (unit.monthlyData && unit.monthlyData.length) {
+    return unit.monthlyData.slice().sort(function(a,b){ return a.month > b.month ? 1 : -1; });
+  }
+  return [];
+}
+
+function buildSystem(userQuery) {
+  var a = runAnalytics();
+  buildVisuals(userQuery, a);
+
+  var tu        = findUnit(userQuery, a.unitStats);
+  var dateRange = parseDateRange(userQuery);
+  var intent    = classifyQuery(userQuery);
+
+  var top20    = a.unitStats.slice(0, 20);
+  var bottom10 = a.unitStats.slice(-10);
+  var seen = {}, featured = [];
+  function addU(u) { if (!seen[u.key]) { seen[u.key]=1; featured.push(u); } }
+  if (tu) addU(tu);
+  top20.forEach(addU);
+  bottom10.forEach(addU);
+
+  var totalUnits = a.uniqueUnits;
+  var bottom10Keys = {};
+  bottom10.forEach(function(u){ bottom10Keys[u.key]=1; });
+
+  var unitLines = featured.map(function(u) {
+    var tag  = bottom10Keys[u.key] && u.wScore < 3 ? '[AT-RISK]' : '';
+    var base = tag + u.name.slice(0,28) + '|SAP:' + (u.sap||'?')
+      + '|n:' + u.responses + '|wtd:' + u.wScore + '|neg:' + u.negRate + '%|' + u.conf.label
+      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,15)+'('+x[1]+')';}).join(',');
+    if (u.minDate) base += '|data:' + u.minDate + ' to ' + u.maxDate;
+    if (dateRange) {
+      var ps = computeDateStats(u, dateRange.start, dateRange.end);
+      if (ps) base += '|period_n:' + ps.n + '|period_avg:' + ps.avg + '|period_neg:' + ps.negRate + '%';
+    }
+    return base;
+  }).join('\n');
+
+  var unitFocus = '';
+  if (tu) {
+    unitFocus = '\nFOCUS UNIT: ' + tu.name + ' (SAP ' + (tu.sap||'?') + ')'
+      + ' | wtd:' + tu.wScore + ' raw:' + tu.rawAvg + ' n=' + tu.responses
+      + ' | ' + tu.conf.label + ' confidence | neg:' + tu.negRate + '%'
+      + '\nTop issues: ' + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(', ');
+    if (tu.minDate) unitFocus += '\nData range: ' + tu.minDate + ' to ' + tu.maxDate;
+    // Always include full monthly trend — critical for date analysis
+    var trend = computeMonthlyTrend(tu);
+    if (trend.length >= 1) {
+      unitFocus += '\nMonthly CSAT (month:avg:n_responses): '
+        + trend.map(function(t){return t.month+':'+t.avg+'(n='+t.n+')';}).join(' | ');
+    }
+    if (dateRange) {
+      var ps2 = computeDateStats(tu, dateRange.start, dateRange.end);
+      if (ps2) unitFocus += '\nFiltered to ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + '): n=' + ps2.n + ' avg=' + ps2.avg;
+      else     unitFocus += '\nNo data found for period: ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + ')';
+    }
+    unitFocus += '\n';
+  }
+
+  var dateContext = '';
+  var todayStr = new Date().toISOString().slice(0,10);
+  if (dateRange) {
+    dateContext = '\nDATE FILTER: ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + ')'
+      + '\nToday: ' + todayStr
+      + '\nData available: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + '\n';
+  } else if (a.hasDateData) {
+    dateContext = '\nData date range: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + ' | Today: ' + todayStr + '\n';
+  }
+
+  var portfolioTrend = '';
+  if (intent.isDate && !tu) {
+    var byMonth2 = {};
+    for (var di = 0; di < DATA.length; di++) {
+      var row = DATA[di];
+      if (!row.month || !row.avg_csat) continue;
+      if (!byMonth2[row.month]) byMonth2[row.month] = {sum:0, n:0};
+      var rn = parseInt(row.responses) || 0;
+      byMonth2[row.month].sum += parseFloat(row.avg_csat) * rn;
+      byMonth2[row.month].n   += rn;
+    }
+    var months2 = Object.keys(byMonth2).sort().slice(-24);
+    if (months2.length >= 2) {
+      portfolioTrend = '\nPORTFOLIO MONTHLY CSAT TREND (month:avg_csat:n_responses):\n'
+        + months2.map(function(mo) {
+          var d = byMonth2[mo];
+          return mo + ':' + (d.n ? (d.sum/d.n).toFixed(2) : '?') + '(n='+d.n+')';
+        }).join(', ') + '\n';
+    }
+  }
+
+  var rendered  = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
+    .concat(pendingTables.map(function(t,i){return 'Table '+(i+1)+': '+t.title;})).join(', ') || 'none';
+  var topIssues = a.topReasons.slice(0,8).map(function(x){return x[0].slice(0,20)+':'+x[1];}).join(', ');
+  var atRisk    = a.unitStats.filter(function(u){return u.wScore < 3 && u.rankable;}).length;
+  var thriving  = a.unitStats.filter(function(u){return u.wScore >= 4 && u.rankable;}).length;
+
+  return 'You are a senior FLIK Hospitality analytics expert at Compass Group. '
+    + 'You analyse VOC survey data using Bayesian-weighted CSAT scoring. '
+    + 'Formula: (n x raw + 30 x global_mean) / (n + 30). '
+    + 'Scale 1-5: below 3.0=at-risk, 3.0-3.9=neutral, 4.0+=thriving. '
+    + 'Confidence: High=n>=15 (reliable), Moderate=n>=5 (cautious), Low=n<5 (do not rank).\n\n'
+    + 'PORTFOLIO: ' + totalUnits + ' units | ' + a.uniqueResponses.toLocaleString() + ' responses'
+    + ' | weighted CSAT ' + a.gMean + '/5 | rankable:' + a.rankable
+    + ' | thriving:' + thriving + ' | at-risk:' + atRisk + '\n'
+    + dateContext
+    + unitFocus
+    + portfolioTrend
+    + '\nUNIT DATA (top 20 + bottom 10 of ' + totalUnits + ' total):\n' + unitLines + '\n\n'
+    + 'Top portfolio issues: ' + topIssues + '\n'
+    + 'Visuals shown: ' + rendered + '\n\n'
+    + 'RULES: plain markdown only, no HTML, no code fences. '
+    + 'Never reproduce data already in charts/tables. '
+    + 'For date/trend questions: use the Monthly CSAT breakdown data above -- it contains the actual month-by-month scores. Compute changes between months, identify the best and worst months, flag any spikes or declines. Always cite specific months and scores. Never say data is unavailable if Monthly CSAT breakdown is present above. '
+    + 'Cite n= and confidence for every unit claim. '
+    + 'Use display names not SAP numbers. '
+    + 'Never speculate on units with n<5. '
+    + 'End with ### Key Takeaway (3-5 sentences).';
+}
+
+function sanitizeReply(raw) {
+  if (!raw) return '';
+  var s = raw.trim();
+  var lines = s.split('\n');
+  var cleaned = [];
+  for (var i = 0; i < lines.length; i++) {
+    var t = lines[i].trim();
+    var isFence = t.length >= 3 && t.charCodeAt(0) === 96 && t.charCodeAt(1) === 96 && t.charCodeAt(2) === 96;
+    if (!isFence) cleaned.push(lines[i]);
+  }
+  s = cleaned.join('\n');
+  s = s.replace(/<style[\s\S]*?<\/style>/gi,'')
+       .replace(/<script[\s\S]*?<\/script>/gi,'')
+       .replace(/<!DOCTYPE[^>]*>/gi,'')
+       .replace(/<html[^>]*>|<\/html>/gi,'')
+       .replace(/<head[\s\S]*?<\/head>/gi,'')
+       .replace(/<body[^>]*>|<\/body>/gi,'')
+       .replace(/<[^>]+>/g,' ')
+       .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ');
+  s = s.replace(/[ \t]{3,}/g,' ').replace(/\n{4,}/g,'\n\n').trim();
+  return s;
+}
+
+function isBadReply(s, stopReason) {
+  if (!s || s.trim().length < 40) return 'empty';
+  var tagCount = (s.match(/<[a-zA-Z][^>]*>/g) || []).length;
+  if (tagCount > 6) return 'html';
+  if (s.indexOf('<!DOCTYPE') !== -1) return 'html';
+  if (stopReason === 'max_tokens') return 'truncated';
+  var tail = s.slice(-80).trim();
+  if (/[,:([\-]\s*$/.test(tail) && s.length > 300) return 'cutoff';
+  return null;
+}
+
+// Server-side prompt cache hash -- avoids resending large system prompt every turn
+
+// -- RAG -- Push analytics to Snowflake UNIT_ANALYTICS table -------------------
+function refreshAnalyticsForRAG() {
+  if (!customData || !DATA || DATA.length === 0) return;
+  var a = runAnalytics();
+  if (!a || !a.unitStats || a.unitStats.length === 0) return;
+
+  fetch('/api/refresh-analytics', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      unitStats:      a.unitStats,
+      portfolioStats: {
+        totalRows:         a.totalRows,
+        uniqueResponses:   a.uniqueResponses,
+        uniqueUnits:       a.uniqueUnits,
+        gMean:             a.gMean,
+        rankable:          a.rankable
+      }
+    })
+  }).then(function(r) {
+    return r.json().then(function(d) {
+      if (d.ok) {
+        console.log('[RAG] Analytics indexed for ' + d.units + ' units');
+      }
+    });
+  }).catch(function(e) {
+    console.warn('[RAG] Analytics refresh failed (non-critical):', e.message);
+  });
+}
+
+var _promptHash = null;
+
+function callAPI(messages, systemPrompt, onSuccess, onError, userQuery) {
+  var body = { messages: messages, useRag: true };
+  if (userQuery) body.userQuery = userQuery;
+  // Use cached hash if available, otherwise send full system prompt
+  if (_promptHash) {
+    body.promptHash = _promptHash;
+  } else {
+    body.system = systemPrompt;
+  }
+
+  fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(res) {
+    if (res.status === 401) { window.location.href = '/login'; return; }
+    if (!res.ok) {
+      return res.json().then(function(d) {
+        // Cache miss -- resend full prompt
+        if (d.error === 'prompt_cache_miss') {
+          _promptHash = null;
+          body = { system: systemPrompt, messages: messages };
+          return fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          }).then(function(r2) {
+            return r2.json().then(function(d2) {
+              if (d2._promptHash) _promptHash = d2._promptHash;
+              onSuccess(d2.content && d2.content[0] ? d2.content[0].text : '', d2.stop_reason || 'end_turn');
+            });
+          });
+        }
+        onError('Server error ' + res.status + ': ' + (d.error || ''));
+      }).catch(function() {
+        res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); });
+      });
+    }
+    return res.json().then(function(data) {
+      if (data._promptHash) _promptHash = data._promptHash;
+      onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn');
+    });
+  }).catch(function(e){ onError(e.message); });
+}
+
+function sendMsg() {
+  var inp = document.getElementById('user-input');
+  var text = inp.value.trim();
+  if (!text) return;
+  // Auth handled server-side
+  inp.value = ''; inp.style.height = '';
+  addUserMsg(text);
+  chatHistory.push({role:'user', content:text});
+  showTyping();
+  var sysPrompt = buildSystem(text);
+  var vizHtml   = renderVisuals();
+  var maxRetries = 2;
+  var attempt    = 0;
+  var messages   = chatHistory.slice(-12);
+
+  function tryOnce() {
+    attempt++;
+    callAPI(messages, sysPrompt, function(reply, stopReason) {
+      var cleaned = sanitizeReply(reply);
+      var bad = isBadReply(cleaned, stopReason);
+      if (!bad) {
+        removeTyping();
+        chatHistory.push({role:'assistant', content:cleaned});
+        addBotMsg(cleaned, vizHtml, false);
+        return;
+      }
+      if (attempt >= maxRetries) {
+        removeTyping();
+        var fallback = cleaned.length > 40 ? cleaned : 'Unable to generate a complete response. Please try rephrasing.';
+        chatHistory.push({role:'assistant', content:fallback});
+        addBotMsg(fallback, vizHtml, true);
+        return;
+      }
+      var correction;
+      if (bad === 'truncated' || bad === 'cutoff') {
+        correction = 'Your response was cut off. Please continue from where you stopped and finish with a Key Takeaway section. Plain markdown only, no HTML, no code fences.';
+        messages = messages.concat([{role:'assistant',content:reply},{role:'user',content:correction}]);
+      } else {
+        correction = 'Your response contained HTML or code blocks. Rewrite as plain markdown only: ### headers, **bold**, - bullets. No HTML tags.';
+        messages = [{role:'user', content:chatHistory[chatHistory.length-1].content}];
+      }
+      tryOnce();
+    }, function(err) {
+      removeTyping();
+      addBotMsg('Error: ' + err, '', false);
+      chatHistory.pop();
+    });
+  }
+  tryOnce();
+}
+
+function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function nowTime() { return new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
+
+function mdToHtml(t) {
+  if (!t) return '';
+  return t
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm,  '<h3>$1</h3>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g,    '<em>$1</em>')
+    .replace(/^> (.+)$/gm,   '<blockquote>$1</blockquote>')
+    .replace(/^[-*] (.+)$/gm,'<li>$1</li>')
+    .replace(/(<li>[\s\S]*?<\/li>)/g, function(m){return '<ul>'+m+'</ul>';})
+    .replace(/\n{2,}/g,'</p><p>')
+    .replace(/\n/g,'<br>');
+}
+
+function hideWelcome() { var w = document.getElementById('welcome'); if (w) w.remove(); }
+
+function addBotMsg(txt, extraHtml, isRetried) {
+  hideWelcome();
+  var m = document.getElementById('messages');
+  var d = document.createElement('div');
+  d.className = 'msg bot';
+  var warn = isRetried ? '<div style="background:#FEF3C7;border:1px solid #FCD34D;border-radius:6px;padding:3px 9px;font-size:10.5px;color:#92400E;margin-bottom:6px;display:inline-block;">Partial response - try rephrasing</div>' : '';
+  var bubble = '<div class="bubble">' + warn + mdToHtml(txt) + '</div>' + (extraHtml || '');
+  d.innerHTML = '<div class="av bot">F</div><div>' + bubble + '<div class="mtime">' + nowTime() + '</div></div>';
+  m.appendChild(d);
+  m.scrollTop = m.scrollHeight;
+  setTimeout(function(){ mountCharts(); m.scrollTop = m.scrollHeight; }, 80);
+}
+
+function addUserMsg(txt) {
+  hideWelcome();
+  var m = document.getElementById('messages');
+  var d = document.createElement('div');
+  d.className = 'msg user';
+  d.innerHTML = '<div><div class="bubble">' + escH(txt) + '</div><div class="mtime">' + nowTime() + '</div></div><div class="av user">You</div>';
+  m.appendChild(d); m.scrollTop = m.scrollHeight;
+}
+
+function showTyping() {
+  hideWelcome();
+  var m = document.getElementById('messages');
+  var d = document.createElement('div');
+  d.className = 'typing'; d.id = 'typ';
+  d.innerHTML = '<div class="av bot">F</div><div class="tbubble"><div class="tdot"></div><div class="tdot"></div><div class="tdot"></div></div>';
+  m.appendChild(d); m.scrollTop = m.scrollHeight;
+}
+
+function removeTyping() { var t = document.getElementById('typ'); if (t) t.remove(); }
+
+function showModal(){} function hideModal(){} function toggleEye(){} function saveKey(){}
+
+function ask(q) { document.getElementById('user-input').value = q; sendMsg(); }
+function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
+function autoResize(el) { el.style.height=''; el.style.height=Math.min(el.scrollHeight,110)+'px'; }
+
+function clearChat() {
+  chatHistory = [];
+  _promptHash = null;
+  var m = document.getElementById('messages');
+  m.innerHTML = '<div class="welcome" id="welcome">'
+    + '<div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>'
+    + '<h2>FLIK Survey Intelligence</h2><p>Chat cleared. Ask a new question.</p>'
+    + '<div class="wchips">'
+    + '<button class="wchip" onclick="ask(\'Full executive summary with portfolio health, unit ranking, and top issues\')">Full dashboard</button>'
+    + '<button class="wchip" onclick="ask(\'Show CSAT scores by unit as a bar chart\')">CSAT chart</button>'
+    + '<button class="wchip" onclick="ask(\'Which unit is most at risk?\')">Most at-risk</button>'
+    + '</div></div>';
 }
 
 
 
+
+
+fetch('/api/me').then(function(r){
+  if (r.status === 401) { window.location.href = '/login'; return null; }
+  return r.json();
+}).then(function(u){
+  if (!u) return;
+  var el = document.getElementById('user-name');
+  if (el) el.textContent = u.name || u.username || 'User';
+}).catch(function(){});
+
+// Auto-load live data from Snowflake on startup
+var nb = document.getElementById('notice-bar');
+if (nb) { nb.style.display = 'flex'; nb.textContent = 'Loading live survey data from Snowflake...'; }
+
+fetch('/api/survey-data').then(function(r){
+  if (r.status === 401) { window.location.href = '/login'; return null; }
+  if (!r.ok) { return r.text().then(function(t){ throw new Error(t.slice(0,100)); }); }
+  return r.json();
+}).then(function(rows){
+  if (!rows) return;
+  // DATA is pre-aggregated monthly rows from server
+  DATA = rows;
+  customData = true;
+  var a2 = runAnalytics();
+  refreshStats();
+  var nb2 = document.getElementById('notice-bar');
+  if (nb2) nb2.style.display = 'none';
+  addBotMsg('Live data loaded: ' + a2.uniqueUnits + ' units | ' + a2.uniqueResponses.toLocaleString() + ' responses | Portfolio CSAT ' + a2.gMean + '/5. What would you like to analyse?');
+  refreshAnalyticsForRAG();
+}).catch(function(e){
+  var nb3 = document.getElementById('notice-bar');
+  if (nb3) { nb3.style.display = 'flex'; nb3.textContent = 'Could not load Snowflake data: ' + e.message; }
+  refreshStats();
+});
+
+refreshStats();
+
+</script>
+</body>
+</html>
