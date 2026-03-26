@@ -193,7 +193,7 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
     </div>
     <div class="stats-box">
       <h4>Dataset Overview</h4>
-      <div class="srow"><span class="slbl">Total Rows</span><span class="sval" id="st-rows">-</span></div>
+      <div class="srow"><span class="slbl">Survey Months</span><span class="sval" id="st-rows">-</span></div>
       <div class="srow"><span class="slbl">Responses</span><span class="sval" id="st-resp">-</span></div>
       <div class="srow"><span class="slbl">Units</span><span class="sval" id="st-units">-</span></div>
       <div class="srow"><span class="slbl">Rankable (5+)</span><span class="sval" id="st-rank">-</span></div>
@@ -324,7 +324,9 @@ function runAnalytics() {
     }
 
     // Parse top_issues string: "Food Quality:669|Speed of Service:534"
-    if (issues) {
+    // Only parse issues ONCE per unit (from first row) - server already totals across all months
+    if (issues && !u._issuesParsed) {
+      u._issuesParsed = true;
       issues.split('|').forEach(function(part) {
         var bits = part.split(':');
         if (bits.length >= 2) {
@@ -406,7 +408,10 @@ function runAnalytics() {
 }
 function refreshStats() {
   var a = runAnalytics();
-  document.getElementById('st-rows').textContent  = a.totalRows.toLocaleString();
+  // Show unique months of data, not raw aggregated row count
+  var uniqueMonths = {};
+  for (var i = 0; i < DATA.length; i++) { if (DATA[i].month) uniqueMonths[DATA[i].month] = 1; }
+  document.getElementById('st-rows').textContent  = Object.keys(uniqueMonths).length + ' months';
   document.getElementById('st-resp').textContent  = a.uniqueResponses.toLocaleString();
   document.getElementById('st-units').textContent = a.uniqueUnits;
   document.getElementById('st-rank').textContent  = a.rankable + ' / ' + a.uniqueUnits;
@@ -563,7 +568,7 @@ function classifyQuery(q) {
   var isRank    = !hasUnit && /rank|ranking|compar|best unit|worst unit|top unit|bottom unit|all unit|list unit|show unit|table of unit/.test(ql);
   var isIssue   = !hasUnit && /complaint|reason|issue|problem|categor|feedback|what are people|common/.test(ql);
   var isHealth  = !hasUnit && /health|portfolio|overview|executive|summary|dashboard|how many thriv|how many at.risk/.test(ql);
-  var isDate    = /date|week|month|year|trend|over time|change|spike|decline|when|recent|last \d|since|period|2024|2025|2026/.test(ql);
+  var isDate    = /date|week|month|year|trend|over time|change|spike|decline|when|recent|last|since|period|2024|2025|2026|distribution|timeline|history|quarter/.test(ql);
   var isConversational = /why|explain|what does|what is|how does|tell me|describe|what happened|can you|should i|what should/.test(ql);
   // Pure conversational questions don't need charts
   if (isConversational && !isDeep && !isRank && !isHealth) return {type:'conversational', hasUnit:hasUnit, isDate:isDate};
@@ -583,8 +588,8 @@ function buildVisuals(query, a) {
 
   // Unit deep-dive
   if (intent.type === 'unit') {
-    var tu = findUnit(query, a.unitStats) || a.unitStats[0];
-    if (!tu) return;
+    var tu = findUnit(query, a.unitStats);
+    if (!tu) return; // Don't fall back to first unit - show no charts if unit not found
     if (tu.topReasons.length >= 2) {
       pendingCharts.push({title:'Feedback Breakdown - ' + tu.name, type:'doughnut',
         labels: tu.topReasons.slice(0,8).map(function(x){return x[0];}),
@@ -906,14 +911,16 @@ function buildSystem(userQuery) {
       + ' | ' + tu.conf.label + ' confidence | neg:' + tu.negRate + '%'
       + '\nTop issues: ' + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(', ');
     if (tu.minDate) unitFocus += '\nData range: ' + tu.minDate + ' to ' + tu.maxDate;
+    // Always include full monthly trend — critical for date analysis
+    var trend = computeMonthlyTrend(tu);
+    if (trend.length >= 1) {
+      unitFocus += '\nMonthly CSAT (month:avg:n_responses): '
+        + trend.map(function(t){return t.month+':'+t.avg+'(n='+t.n+')';}).join(' | ');
+    }
     if (dateRange) {
       var ps2 = computeDateStats(tu, dateRange.start, dateRange.end);
-      if (ps2) unitFocus += '\nPeriod stats (' + dateRange.label + '): n=' + ps2.n + ' avg=' + ps2.avg + ' neg=' + ps2.negRate + '%';
-      else     unitFocus += '\nNo data found for period: ' + dateRange.label;
-      var trend = computeMonthlyTrend(tu);
-      if (trend.length >= 2) {
-        unitFocus += '\nMonthly CSAT trend: ' + trend.map(function(t){return t.month+':'+t.avg+'(n='+t.n+')';}).join(', ');
-      }
+      if (ps2) unitFocus += '\nFiltered to ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + '): n=' + ps2.n + ' avg=' + ps2.avg;
+      else     unitFocus += '\nNo data found for period: ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + ')';
     }
     unitFocus += '\n';
   }
@@ -971,10 +978,10 @@ function buildSystem(userQuery) {
     + 'Visuals shown: ' + rendered + '\n\n'
     + 'RULES: plain markdown only, no HTML, no code fences. '
     + 'Never reproduce data already in charts/tables. '
-    + 'For date questions: compute changes, identify spikes/declines, give specific dates/months. '
+    + 'For date/trend questions: use the Monthly CSAT breakdown data above -- it contains the actual month-by-month scores. Compute changes between months, identify the best and worst months, flag any spikes or declines. Always cite specific months and scores. Never say data is unavailable if Monthly CSAT breakdown is present above. '
     + 'Cite n= and confidence for every unit claim. '
     + 'Use display names not SAP numbers. '
-    + 'Never speculate on n<5 units. '
+    + 'Never speculate on units with n<5. '
     + 'End with ### Key Takeaway (3-5 sentences).';
 }
 

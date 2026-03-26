@@ -349,7 +349,6 @@ app.get('/forgot-password', function (req, res) {
 </div></body></html>`);
 });
 
-
 app.post('/forgot-password', async function (req, res) {
   const email = (req.body.email || '').trim().toLowerCase();
   if (!email) return res.redirect('/forgot-password');
@@ -588,15 +587,16 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
     ORDER BY 1, 4
   `;
 
-  // Query 2: Top issues per unit (simple count, no LISTAGG)
+  // Query 2: Top issues per unit — total count across all time
   const sql2 = `
     SELECT
       COALESCE(NULLIF(UNIT_SAP_NUMBER::VARCHAR, '0'), UNIT) AS UNIT_KEY,
       CSAT_REASON,
-      COUNT(*) AS CNT
+      COUNT(DISTINCT RESPONSE_ID) AS CNT
     FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
     WHERE CSAT_REASON IS NOT NULL
       AND TRIM(CSAT_REASON) != ''
+      AND RESPONSE_ID IS NOT NULL
     GROUP BY 1, 2
     ORDER BY 1, 3 DESC
   `;
