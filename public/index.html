@@ -1189,8 +1189,7 @@ function addBotMsg(txt, extraHtml, isRetried) {
   var bubble = '<div class="bubble">' + warn + mdToHtml(txt) + '</div>' + (extraHtml || '');
   d.innerHTML = '<div class="av bot">F</div><div>' + bubble + '<div class="mtime">' + nowTime() + '</div></div>';
   m.appendChild(d);
-  m.scrollTop = m.scrollHeight;
-  setTimeout(function(){ mountCharts(); m.scrollTop = m.scrollHeight; }, 80);
+  setTimeout(function(){ mountCharts(); d.scrollIntoView({behavior:'smooth', block:'start'}); }, 80);
 }
 
 function addUserMsg(txt) {
