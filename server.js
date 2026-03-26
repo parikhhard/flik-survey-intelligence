@@ -349,6 +349,7 @@ app.get('/forgot-password', function (req, res) {
 </div></body></html>`);
 });
 
+
 app.post('/forgot-password', async function (req, res) {
   const email = (req.body.email || '').trim().toLowerCase();
   if (!email) return res.redirect('/forgot-password');
