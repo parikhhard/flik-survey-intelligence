@@ -56,6 +56,7 @@ async function sendEmail(to, subject, html) {
     return;
   }
 
+  
   if (brevoKey) {
     // Brevo — no domain verification needed, sends to any address
     const r = await fetch('https://api.brevo.com/v3/smtp/email', {
