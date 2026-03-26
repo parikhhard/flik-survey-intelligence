@@ -563,85 +563,31 @@ function dbCreateUser(email, fullname, hash) {
   });
 }
 
-// ── Survey data — pre-aggregated in Snowflake, not raw rows ──────────────────
+// ── Survey data ───────────────────────────────────────────────────────────────
 app.get('/api/survey-data', requireAuth, function (req, res) {
-  // Instead of returning 293k raw rows, we return two pre-aggregated datasets:
-  // 1. Unit-level stats (one row per unit per month)
-  // 2. Portfolio-level monthly trend
-  // The browser JS reconstructs analytics from these — same results, 99% less data
+  const sql = [
+    'SELECT RESPONSE_ID, UNIT_SAP_NUMBER,',
+    '  UNIT AS UNIT_NAME, QUESTION_MAPPING_CLEANSED_QUESTION AS ANALYTICS_QUESTION_TEXT,',
+    '  CSAT, CSAT_REASON, AUDIT_DATE',
+    'FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES',
+    'WHERE CSAT_REASON IS NOT NULL AND CSAT IS NOT NULL',
+    'ORDER BY AUDIT_DATE ASC'
+  ].join('\n');
 
-  const unitSql = `
-    WITH base AS (
-      SELECT
-        COALESCE(NULLIF(UNIT_SAP_NUMBER::VARCHAR, '0'), UNIT) AS UNIT_KEY,
-        UNIT                                                    AS UNIT_NAME,
-        UNIT_SAP_NUMBER::VARCHAR                               AS UNIT_SAP,
-        TO_CHAR(AUDIT_DATE, 'YYYY-MM')                         AS MONTH,
-        RESPONSE_ID,
-        CSAT,
-        CSAT_REASON
-      FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
-      WHERE CSAT_REASON IS NOT NULL
-        AND CSAT IS NOT NULL
-        AND AUDIT_DATE IS NOT NULL
-    ),
-    monthly AS (
-      SELECT
-        UNIT_KEY, UNIT_NAME, UNIT_SAP, MONTH,
-        COUNT(DISTINCT RESPONSE_ID)                                 AS RESPONSES,
-        AVG(CSAT)                                                   AS AVG_CSAT,
-        SUM(CASE WHEN CSAT < 3  THEN 1 ELSE 0 END)                 AS NEG_COUNT,
-        SUM(CASE WHEN CSAT >= 4 THEN 1 ELSE 0 END)                 AS POS_COUNT,
-        SUM(CASE WHEN CSAT <= 2 THEN 1 ELSE 0 END)                 AS DET_COUNT,
-        COUNT(CSAT)                                                 AS SCORE_COUNT
-      FROM base
-      GROUP BY UNIT_KEY, UNIT_NAME, UNIT_SAP, MONTH
-    ),
-    top_issues AS (
-      SELECT
-        UNIT_KEY,
-        CSAT_REASON,
-        COUNT(*) AS CNT,
-        ROW_NUMBER() OVER (PARTITION BY UNIT_KEY ORDER BY COUNT(*) DESC) AS RN
-      FROM base
-      GROUP BY UNIT_KEY, CSAT_REASON
-    )
-    SELECT
-      m.UNIT_KEY, m.UNIT_NAME, m.UNIT_SAP, m.MONTH,
-      m.RESPONSES, m.AVG_CSAT, m.NEG_COUNT, m.POS_COUNT,
-      m.DET_COUNT, m.SCORE_COUNT,
-      LISTAGG(CASE WHEN t.RN <= 5 THEN t.CSAT_REASON || ':' || t.CNT END, '|')
-        WITHIN GROUP (ORDER BY t.RN)                               AS TOP_ISSUES
-    FROM monthly m
-    LEFT JOIN top_issues t ON m.UNIT_KEY = t.UNIT_KEY AND t.RN <= 5
-    GROUP BY m.UNIT_KEY, m.UNIT_NAME, m.UNIT_SAP, m.MONTH,
-             m.RESPONSES, m.AVG_CSAT, m.NEG_COUNT, m.POS_COUNT, m.DET_COUNT, m.SCORE_COUNT
-    ORDER BY m.UNIT_KEY, m.MONTH
-  `;
-
-  sfQuery(unitSql, function (err, rows) {
-    if (err) {
-      console.error('[Survey Data]', err.message);
-      return res.status(500).json({ error: err.message });
-    }
-
+  sfQuery(sql, function (err, rows) {
+    if (err) { console.error('[Survey Data]', err.message); return res.status(500).json({ error: err.message }); }
     const out = rows.map(function (r) {
       return {
-        unit_key:    String(r.UNIT_KEY   || ''),
-        unit_name:   String(r.UNIT_NAME  || ''),
-        unit_sap:    String(r.UNIT_SAP   || ''),
-        month:       String(r.MONTH      || ''),
-        responses:   parseInt(r.RESPONSES)   || 0,
-        avg_csat:    parseFloat(r.AVG_CSAT)  || 0,
-        neg_count:   parseInt(r.NEG_COUNT)   || 0,
-        pos_count:   parseInt(r.POS_COUNT)   || 0,
-        det_count:   parseInt(r.DET_COUNT)   || 0,
-        score_count: parseInt(r.SCORE_COUNT) || 0,
-        top_issues:  String(r.TOP_ISSUES || '')
+        response_id:             String(r.RESPONSE_ID             || ''),
+        unit_sap_number:         String(r.UNIT_SAP_NUMBER         || ''),
+        unit:                    String(r.UNIT_NAME               || ''),
+        analytics_question_text: String(r.ANALYTICS_QUESTION_TEXT || ''),
+        csat:                    parseFloat(r.CSAT)               || 0,
+        csat_reason:             String(r.CSAT_REASON             || ''),
+        audit_date:              r.AUDIT_DATE ? String(r.AUDIT_DATE).slice(0,10) : ''
       };
     });
-
-    console.log('[Survey Data] ' + out.length + ' monthly unit rows -> ' + req.session.user.email);
+    console.log('[Survey Data] ' + out.length + ' rows -> ' + req.session.user.email);
     res.json(out);
   });
 });

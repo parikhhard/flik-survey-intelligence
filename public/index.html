@@ -284,105 +284,142 @@ function confTier(n) {
 }
 
 function runAnalytics() {
-  var units = {}, reasons = {}, allScores = [], allRids = {}, qMap = {};
-  var allDates = [];
+  // DATA is now pre-aggregated monthly rows from server:
+  // { unit_key, unit_name, unit_sap, month, responses, avg_csat,
+  //   neg_count, pos_count, det_count, score_count, top_issues }
+  if (!DATA || !DATA.length) {
+    return { unitStats:[], gMean:3.0, topReasons:[], qStats:[],
+      totalRows:0, uniqueResponses:0, uniqueUnits:0,
+      rankable:0, reliable:0, minDate:'', maxDate:'', hasDateData:false };
+  }
+
+  var units   = {};   // key -> unit accumulator
+  var reasons = {};   // reason -> total count across portfolio
+  var allWeightedScores = [];
+  var allMonths = [];
+
   for (var ri = 0; ri < DATA.length; ri++) {
-    var r = DATA[ri];
-    var sc = parseFloat(r.csat);
-    var reason = (r.csat_reason || '').trim();
-    var qt = (r.analytics_question_text || '').trim();
-    var sap = r.unit_sap_number;
-    var uName = (r.unit || '').trim();
-    var auditDate = (r.audit_date || '').trim();
-    var key = (sap && sap !== 0 && String(sap) !== '0') ? String(sap) : (uName || 'Unknown');
-    var dName = uName || (sap && sap !== 0 ? 'SAP-' + sap : 'Unknown');
-    if (!units[key]) { units[key] = {name:dName, sap:(sap && sap !== 0 ? sap : null), scores:[], reasons:[], rids:{}, rows:0, dates:[], scoresByDate:[]}; }
-    else if (uName && (units[key].name.indexOf('SAP-') === 0 || !units[key].name)) { units[key].name = uName; }
-    units[key].rows++;
-    var rid = (r.response_id || '').trim();
-    if (rid && rid !== '0') { units[key].rids[rid] = 1; allRids[rid] = 1; }
-    if (!isNaN(sc) && sc > 0) {
-      units[key].scores.push(sc);
-      allScores.push(sc);
-      if (auditDate) {
-        units[key].scoresByDate.push({date:auditDate, score:sc});
-        allDates.push(auditDate);
-      }
+    var r       = DATA[ri];
+    var key     = String(r.unit_key   || r.unit_name || 'Unknown');
+    var uName   = String(r.unit_name  || '');
+    var uSap    = String(r.unit_sap   || '');
+    var month   = String(r.month      || '');
+    var n       = parseInt(r.responses)   || 0;
+    var avg     = parseFloat(r.avg_csat)  || 0;
+    var negC    = parseInt(r.neg_count)   || 0;
+    var posC    = parseInt(r.pos_count)   || 0;
+    var detC    = parseInt(r.det_count)   || 0;
+    var scoreC  = parseInt(r.score_count) || 0;
+    var issues  = String(r.top_issues || '');
+
+    if (!units[key]) {
+      units[key] = {
+        name: uName, sap: uSap,
+        totalResponses: 0, totalScoreCount: 0,
+        weightedSum: 0,   // sum of (n * avg) for weighted average
+        negCount: 0, posCount: 0, detCount: 0,
+        monthlyData: [],  // [{month, avg, n}] for trend
+        issueMap: {},
+        months: []
+      };
     }
-    if (auditDate) units[key].dates.push(auditDate);
-    if (reason) { units[key].reasons.push(reason); reasons[reason] = (reasons[reason] || 0) + 1; }
-    if (qt) {
-      var sq = qt.slice(0, 65);
-      if (!qMap[sq]) { qMap[sq] = {scores:[], rids:{}}; }
-      if (!isNaN(sc) && sc > 0) { qMap[sq].scores.push(sc); }
-      if (rid) { qMap[sq].rids[rid] = 1; }
+
+    var u = units[key];
+    if (uName && (!u.name || u.name === key)) u.name = uName;
+
+    u.totalResponses  += n;
+    u.totalScoreCount += scoreC;
+    u.weightedSum     += avg * scoreC; // weighted by score count for accurate avg
+    u.negCount        += negC;
+    u.posCount        += posC;
+    u.detCount        += detC;
+    if (month) {
+      u.monthlyData.push({ month:month, avg:avg, n:n });
+      u.months.push(month);
+      allMonths.push(month);
+    }
+
+    // Parse top_issues string: "Food Quality:669|Speed of Service:534"
+    if (issues) {
+      issues.split('|').forEach(function(part) {
+        var bits = part.split(':');
+        if (bits.length >= 2) {
+          var rName = bits[0].trim();
+          var rCnt  = parseInt(bits[bits.length-1]) || 1;
+          if (rName) {
+            u.issueMap[rName] = (u.issueMap[rName] || 0) + rCnt;
+            reasons[rName]    = (reasons[rName]    || 0) + rCnt;
+          }
+        }
+      });
     }
   }
-  var gMean = allScores.length ? allScores.reduce(function(a,b){return a+b;},0) / allScores.length : 3.0;
-  var unitKeys = Object.keys(units);
+
+  // Compute global mean across all units (weighted by responses)
+  var totalWeightedSum = 0, totalScores = 0;
+  Object.keys(units).forEach(function(k) {
+    totalWeightedSum += units[k].weightedSum;
+    totalScores      += units[k].totalScoreCount;
+  });
+  var gMean = totalScores ? totalWeightedSum / totalScores : 3.0;
+
+  // Build unitStats array
   var unitStats = [];
-  for (var ui = 0; ui < unitKeys.length; ui++) {
-    var k = unitKeys[ui];
-    var u = units[k];
-    var n = Object.keys(u.rids).length || u.rows;
-    var rawAvg = u.scores.length ? u.scores.reduce(function(a,b){return a+b;},0) / u.scores.length : 0;
-    var wScore = u.scores.length ? bayesian(rawAvg, n, gMean) : gMean;
-    var total = u.scores.length;
-    var negC = 0, posC = 0, detC = 0;
-    for (var si = 0; si < u.scores.length; si++) {
-      if (u.scores[si] < 3) negC++;
-      if (u.scores[si] >= 4) posC++;
-      if (u.scores[si] <= 2) detC++;
-    }
-    function pct(x, t) { return t ? +(x / t * 100).toFixed(1) : 0; }
-    var nps = Math.round(pct(posC, total) - pct(detC, total));
-    var rc = {};
-    for (var rri = 0; rri < u.reasons.length; rri++) { rc[u.reasons[rri]] = (rc[u.reasons[rri]] || 0) + 1; }
-    var topReasons = Object.keys(rc).map(function(r){return [r,rc[r]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,10);
+  Object.keys(units).forEach(function(key) {
+    var u       = units[key];
+    var n       = u.totalResponses;
+    var rawAvg  = u.totalScoreCount ? u.weightedSum / u.totalScoreCount : 0;
+    var wScore  = rawAvg ? bayesian(rawAvg, n, gMean) : gMean;
+    var total   = u.totalScoreCount;
+    function pct(x,t) { return t ? +(x/t*100).toFixed(1) : 0; }
+    var negRate = pct(u.negCount, total);
+    var posRate = pct(u.posCount, total);
+    var nps     = Math.round(posRate - pct(u.detCount, total));
+    var topReasons = Object.keys(u.issueMap)
+      .map(function(r){ return [r, u.issueMap[r]]; })
+      .sort(function(a,b){ return b[1]-a[1]; })
+      .slice(0,10);
     var conf = confTier(n);
-    // Date range for this unit
-    var sortedDates = u.dates.slice().sort();
-    var minDate = sortedDates.length ? sortedDates[0] : '';
-    var maxDate = sortedDates.length ? sortedDates[sortedDates.length-1] : '';
+    var sortedMonths = u.months.slice().sort();
+    // Build scoresByDate for trend functions (one entry per month using avg as representative score)
+    var scoresByDate = u.monthlyData.map(function(md) {
+      return { date: md.month + '-15', score: md.avg, n: md.n };
+    });
     unitStats.push({
-      key:k, name:u.name, sap:u.sap,
+      key:key, name:u.name, sap:u.sap,
       rawAvg:+rawAvg.toFixed(2), wScore:+wScore.toFixed(2),
-      responses:n, totalRows:u.rows,
-      negRate:pct(negC,total), posRate:pct(posC,total), nps:nps,
+      responses:n, totalRows:n,
+      negRate:negRate, posRate:posRate, nps:nps,
       topReasons:topReasons, conf:conf,
       rankable:n >= MIN_RANK, reliable:n >= MIN_RELIABLE,
-      minDate:minDate, maxDate:maxDate,
-      scoresByDate:u.scoresByDate
+      minDate: sortedMonths.length ? sortedMonths[0] : '',
+      maxDate: sortedMonths.length ? sortedMonths[sortedMonths.length-1] : '',
+      monthlyData: u.monthlyData.sort(function(a,b){ return a.month > b.month ? 1 : -1; }),
+      scoresByDate: scoresByDate
     });
-  }
-  unitStats.sort(function(a,b){return b.wScore - a.wScore;});
-  var topReasons = Object.keys(reasons).map(function(r){return [r,reasons[r]];}).sort(function(a,b){return b[1]-a[1];});
-  var qStats = [];
-  var qKeys = Object.keys(qMap);
-  for (var qi = 0; qi < qKeys.length; qi++) {
-    var qk = qKeys[qi];
-    var qd = qMap[qk];
-    var qn = Object.keys(qd.rids).length || qd.scores.length;
-    var qavg = qd.scores.length ? qd.scores.reduce(function(a,b){return a+b;},0) / qd.scores.length : null;
-    var qwavg = qavg !== null ? bayesian(qavg, qn, gMean) : null;
-    if (qavg !== null) { qStats.push({q:qk, n:qn, avg:+qavg.toFixed(2), wAvg:+qwavg.toFixed(2)}); }
-  }
-  qStats.sort(function(a,b){return a.wAvg - b.wAvg;});
-  var allDatesSorted = allDates.slice().sort();
+  });
+
+  unitStats.sort(function(a,b){ return b.wScore - a.wScore; });
+  var topReasons = Object.keys(reasons)
+    .map(function(r){ return [r, reasons[r]]; })
+    .sort(function(a,b){ return b[1]-a[1]; });
+  var allMonthsSorted = allMonths.slice().sort();
+
   return {
-    unitStats:unitStats, gMean:+gMean.toFixed(2),
-    topReasons:topReasons, qStats:qStats,
-    totalRows:DATA.length,
-    uniqueResponses:Object.keys(allRids).length || DATA.length,
-    uniqueUnits:Object.keys(units).length,
-    rankable:unitStats.filter(function(u){return u.rankable;}).length,
-    reliable:unitStats.filter(function(u){return u.reliable;}).length,
-    minDate:allDatesSorted.length ? allDatesSorted[0] : '',
-    maxDate:allDatesSorted.length ? allDatesSorted[allDatesSorted.length-1] : '',
-    hasDateData:allDatesSorted.length > 0
+    unitStats:    unitStats,
+    gMean:        +gMean.toFixed(2),
+    topReasons:   topReasons,
+    qStats:       [],
+    totalRows:    DATA.length,
+    uniqueResponses: unitStats.reduce(function(s,u){ return s+u.responses; }, 0),
+    uniqueUnits:  unitStats.length,
+    rankable:     unitStats.filter(function(u){ return u.rankable; }).length,
+    reliable:     unitStats.filter(function(u){ return u.reliable; }).length,
+    minDate:      allMonthsSorted.length ? allMonthsSorted[0] : '',
+    maxDate:      allMonthsSorted.length ? allMonthsSorted[allMonthsSorted.length-1] : '',
+    hasDateData:  allMonthsSorted.length > 0
   };
 }
-
 function refreshStats() {
   var a = runAnalytics();
   document.getElementById('st-rows').textContent  = a.totalRows.toLocaleString();
@@ -821,29 +858,28 @@ function parseDateRange(query) {
 }
 
 function computeDateStats(unit, startDate, endDate) {
-  if (!unit.scoresByDate || !unit.scoresByDate.length) return null;
-  var filtered = unit.scoresByDate.filter(function(s) {
-    return (!startDate || s.date >= startDate) && (!endDate || s.date <= endDate);
+  // Use pre-computed monthlyData filtered to date range
+  if (!unit.monthlyData || !unit.monthlyData.length) return null;
+  // startDate/endDate might be YYYY-MM-DD, convert to YYYY-MM for monthly comparison
+  var startM = startDate ? startDate.slice(0,7) : null;
+  var endM   = endDate   ? endDate.slice(0,7)   : null;
+  var filtered = unit.monthlyData.filter(function(md) {
+    return (!startM || md.month >= startM) && (!endM || md.month <= endM);
   });
   if (!filtered.length) return null;
-  var scores = filtered.map(function(s){return s.score;});
-  var avg = scores.reduce(function(a,b){return a+b;},0) / scores.length;
-  var neg = scores.filter(function(s){return s < 3;}).length;
-  return { n:scores.length, avg:+avg.toFixed(2), negRate:+(neg/scores.length*100).toFixed(1) };
+  // Weighted average across months
+  var totalN = 0, weightedSum = 0;
+  filtered.forEach(function(md) { totalN += md.n; weightedSum += md.avg * md.n; });
+  var avg = totalN ? weightedSum / totalN : 0;
+  return { n:totalN, avg:+avg.toFixed(2), negRate:null, monthCount:filtered.length };
 }
 
 function computeMonthlyTrend(unit) {
-  if (!unit.scoresByDate || !unit.scoresByDate.length) return [];
-  var byMonth = {};
-  unit.scoresByDate.forEach(function(s) {
-    var month = s.date.slice(0,7);
-    if (!byMonth[month]) byMonth[month] = [];
-    byMonth[month].push(s.score);
-  });
-  return Object.keys(byMonth).sort().map(function(m2) {
-    var sc = byMonth[m2];
-    return { month:m2, avg:+(sc.reduce(function(a,b){return a+b;},0)/sc.length).toFixed(2), n:sc.length };
-  });
+  // Use pre-computed monthlyData if available
+  if (unit.monthlyData && unit.monthlyData.length) {
+    return unit.monthlyData.slice().sort(function(a,b){ return a.month > b.month ? 1 : -1; });
+  }
+  return [];
 }
 
 function buildSystem(userQuery) {
@@ -910,21 +946,25 @@ function buildSystem(userQuery) {
 
   var portfolioTrend = '';
   if (intent.isDate && !tu) {
-    var byMonth = {};
+    var byMonth2 = {};
     for (var di = 0; di < DATA.length; di++) {
       var row = DATA[di];
-      if (!row.audit_date || !row.csat) continue;
-      var month = row.audit_date.slice(0,7);
-      if (!byMonth[month]) byMonth[month] = [];
-      byMonth[month].push(parseFloat(row.csat));
+      if (!row.month || !row.avg_csat) continue;
+      if (!byMonth2[row.month]) byMonth2[row.month] = {sum:0, n:0};
+      var rn = parseInt(row.responses) || 0;
+      byMonth2[row.month].sum += parseFloat(row.avg_csat) * rn;
+      byMonth2[row.month].n   += rn;
     }
-    var months = Object.keys(byMonth).sort().slice(-24);
-    if (months.length >= 2) {
-      portfolioTrend = '\nPORTFOLIO MONTHLY CSAT TREND (month:avg:n):\n'
-        + months.map(function(mo) {
-          var sc = byMonth[mo];
-          return mo + ':' + (sc.reduce(function(a,b){return a+b;},0)/sc.length).toFixed(2) + '(n='+sc.length+')';
-        }).join(', ') + '\n';
+    var months2 = Object.keys(byMonth2).sort().slice(-24);
+    if (months2.length >= 2) {
+      portfolioTrend = '
+PORTFOLIO MONTHLY CSAT TREND (month:avg_csat:n_responses):
+'
+        + months2.map(function(mo) {
+          var d = byMonth2[mo];
+          return mo + ':' + (d.n ? (d.sum/d.n).toFixed(2) : '?') + '(n='+d.n+')';
+        }).join(', ') + '
+';
     }
   }
 
@@ -1217,22 +1257,14 @@ fetch('/api/survey-data').then(function(r){
   return r.json();
 }).then(function(rows){
   if (!rows) return;
-  DATA = rows.map(function(r){
-    return {
-      response_id:             r.response_id             || '',
-      unit_sap_number:         r.unit_sap_number         || 0,
-      unit:                    r.unit                    || '',
-      analytics_question_text: r.analytics_question_text || '',
-      csat:                    parseFloat(r.csat)        || 0,
-      csat_reason:             r.csat_reason             || '',
-      audit_date:              r.audit_date              || ''
-    };
-  });
+  // DATA is pre-aggregated monthly rows from server
+  DATA = rows;
   customData = true;
+  var a2 = runAnalytics();
   refreshStats();
   var nb2 = document.getElementById('notice-bar');
   if (nb2) nb2.style.display = 'none';
-  addBotMsg('Live data loaded: ' + DATA.length.toLocaleString() + ' rows from Snowflake. What would you like to analyse?');
+  addBotMsg('Live data loaded: ' + a2.uniqueUnits + ' units | ' + a2.uniqueResponses.toLocaleString() + ' responses | Portfolio CSAT ' + a2.gMean + '/5. What would you like to analyse?');
   refreshAnalyticsForRAG();
 }).catch(function(e){
   var nb3 = document.getElementById('notice-bar');
