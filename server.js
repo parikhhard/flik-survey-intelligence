@@ -56,7 +56,7 @@ async function sendEmail(to, subject, html) {
     return;
   }
 
-  
+
   if (brevoKey) {
     // Brevo — no domain verification needed, sends to any address
     const r = await fetch('https://api.brevo.com/v3/smtp/email', {
@@ -839,7 +839,6 @@ app.post('/api/chat', requireAuth, function (req, res) {
   }
 
   function buildAndCallCortex(ragUnits) {
-    // Merge RAG results into system prompt if available
     let systemFinal = (system || '').slice(0, 4000);
 
     if (ragUnits && ragUnits.length > 0) {
@@ -861,20 +860,30 @@ app.post('/api/chat', requireAuth, function (req, res) {
     conversation += 'ASSISTANT:';
 
     const escaped = conversation.replace(/\\/g, '\\\\').replace(/'/g, "''");
-    const sql     = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-6', '" + escaped + "') AS RESPONSE";
+    const sql = "SELECT SNOWFLAKE.CORTEX.COMPLETE('claude-sonnet-4-6', '" + escaped + "') AS RESPONSE";
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('X-Accel-Buffering', 'no');
+    let answered = false;
+    const keepAlive = setInterval(function () {
+      if (!answered) { try { res.write(' '); } catch (e) {} }
+    }, 15000);
 
     sfQuery(sql, function (queryErr, rows) {
+      if (answered) return;
+      answered = true;
+      clearInterval(keepAlive);
       if (queryErr) {
         console.error('[Cortex]', queryErr.message);
-        return res.status(500).json({ error: 'Cortex failed: ' + queryErr.message });
+        return res.end(JSON.stringify({ error: 'Cortex failed: ' + queryErr.message }));
       }
       const text = rows && rows[0] ? String(rows[0].RESPONSE || '') : '';
-      res.json({
+      res.end(JSON.stringify({
         content:     [{ type: 'text', text: text }],
         stop_reason: 'end_turn',
         _provider:   'snowflake-cortex',
         _ragUnits:   ragUnits ? ragUnits.length : 0
-      });
+      }));
     }, 90000);
   }
 
