@@ -31,6 +31,7 @@ header{height:62px;flex-shrink:0;background:var(--warm);border-bottom:1px solid 
 .hbtn:hover{border-color:var(--g2);color:var(--g2);background:var(--g6);}
 .hbtn svg{width:13px;height:13px;stroke:currentColor;fill:none;stroke-width:2;}
 .hbtn.active{border-color:rgba(45,106,79,.3);background:var(--g6);color:var(--g2);}
+#csv-file{display:none;}
 .app{flex:1;display:flex;overflow:hidden;}
 aside{width:270px;flex-shrink:0;background:var(--warm);border-right:1px solid var(--bd);display:flex;flex-direction:column;overflow:hidden;}
 .aside-scroll{flex:1;overflow-y:auto;padding:12px 10px;}
@@ -159,15 +160,19 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
   </div>
   <div class="hact">
     <div class="badge"><div class="pdot"></div>AI Analyst</div>
-
+    <button class="hbtn" onclick="document.getElementById('csv-file').click()">
+      <svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      Upload CSV
+    </button>
+    <button class="hbtn" id="key-btn" onclick="showModal()">
+      <svg viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></svg>
+      <span id="key-label">Set API Key</span>
+    </button>
     <button class="hbtn" onclick="clearChat()">
       <svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>
       New Chat
     </button>
-    <div style="display:flex;align-items:center;gap:8px;padding:5px 12px;background:var(--g6);border:1px solid var(--bd2);border-radius:20px;font-size:11px;color:var(--g2);font-weight:600;">
-      <span id="user-name">...</span>
-      <a href="/logout" style="color:var(--slate);text-decoration:none;font-size:10px;font-weight:400;opacity:0.7;">Sign out</a>
-    </div>
+    <input type="file" id="csv-file" accept=".csv" onchange="handleCSV(this)">
   </div>
 </header>
 
@@ -217,7 +222,7 @@ table.rt tr:hover td{background:rgba(216,243,220,.35);}
       </div>
     </div>
     <div class="input-zone">
-      <div class="notice-bar" id="notice-bar">Loading live survey data from Snowflake...</div>
+      <div class="notice-bar" id="notice-bar">Running on demo data - upload survey_responses.csv for live analysis.</div>
       <div class="input-row">
         <textarea id="user-input" placeholder="Ask about a unit by name or SAP#, request charts, tables, weighted analysis..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
         <button class="send-btn" onclick="sendMsg()"><svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
@@ -236,7 +241,7 @@ var PAL = ['#2D6A4F','#40916C','#52B788','#E9C46A','#E76F51','#60A5FA','#95D5B2'
 
 var DATA = [];
 var chatHistory = [];
-// AI handled via Snowflake Cortex server-side
+var API_KEY = '';
 var customData = false;
 var chartCounter = 0;
 var chartReg = {};
@@ -268,155 +273,176 @@ function confTier(n) {
 }
 
 function runAnalytics() {
-  // DATA is now pre-aggregated monthly rows from server:
-  // { unit_key, unit_name, unit_sap, month, responses, avg_csat,
-  //   neg_count, pos_count, det_count, score_count, top_issues }
   if (!DATA || !DATA.length) {
     return { unitStats:[], gMean:3.0, topReasons:[], qStats:[],
       totalRows:0, uniqueResponses:0, uniqueUnits:0,
       rankable:0, reliable:0, minDate:'', maxDate:'', hasDateData:false };
   }
 
-  var units   = {};   // key -> unit accumulator
-  var reasons = {};   // reason -> total count across portfolio
-  var allWeightedScores = [];
-  var allMonths = [];
+  var units = {}, reasons = {}, allMonths = [];
+  var daypartPortfolio = {}, categoryPortfolio = {};
 
   for (var ri = 0; ri < DATA.length; ri++) {
-    var r       = DATA[ri];
-    var key     = String(r.unit_key   || r.unit_name || 'Unknown');
-    var uName   = String(r.unit_name  || '');
-    var uSap    = String(r.unit_sap   || '');
-    var month   = String(r.month      || '');
-    var n       = parseInt(r.responses)   || 0;
-    var avg     = parseFloat(r.avg_csat)  || 0;
-    var negC    = parseInt(r.neg_count)   || 0;
-    var posC    = parseInt(r.pos_count)   || 0;
-    var detC    = parseInt(r.det_count)   || 0;
-    var scoreC  = parseInt(r.score_count) || 0;
-    var issues  = String(r.top_issues || '');
+    var r      = DATA[ri];
+    var key    = String(r.unit_key   || r.unit_name || 'Unknown');
+    var uName  = String(r.unit_name  || '');
+    var uSap   = String(r.unit_sap   || '');
+    var month  = String(r.month      || '');
+    var n      = parseInt(r.responses)    || 0;
+    var avg    = parseFloat(r.avg_csat)   || 0;
+    var negC   = parseInt(r.neg_count)    || 0;
+    var posC   = parseInt(r.pos_count)    || 0;
+    var detC   = parseInt(r.det_count)    || 0;
+    var scoreC = parseInt(r.score_count)  || 0;
+    var npsPro = parseInt(r.nps_promoters)  || 0;
+    var npsDet = parseInt(r.nps_detractors) || 0;
+    var npsTot = parseInt(r.nps_total)      || 0;
 
     if (!units[key]) {
       units[key] = {
-        name: uName, sap: uSap,
-        totalResponses: 0, totalScoreCount: 0,
-        weightedSum: 0,   // sum of (n * avg) for weighted average
-        negCount: 0, posCount: 0, detCount: 0,
-        monthlyData: [],  // [{month, avg, n}] for trend
-        issueMap: {},
-        months: []
+        name:uName, sap:uSap,
+        totalResponses:0, totalScoreCount:0, weightedSum:0,
+        negCount:0, posCount:0, detCount:0,
+        npsPromoters:0, npsDetractors:0, npsTotal:0,
+        monthlyData:[], issueMap:{}, months:[],
+        // Enriched fields (from first row)
+        city:'', state:'', rvp:'', svp:'', president:'', rdm:'',
+        unit_industry:'', unit_sub_industry:'',
+        daypartMap:{}, categoryMap:{},
+        _issuesParsed:false, _daypartParsed:false, _categoryParsed:false
       };
     }
-
     var u = units[key];
     if (uName && (!u.name || u.name === key)) u.name = uName;
 
     u.totalResponses  += n;
     u.totalScoreCount += scoreC;
-    u.weightedSum     += avg * scoreC; // weighted by score count for accurate avg
-    u.negCount        += negC;
-    u.posCount        += posC;
-    u.detCount        += detC;
-    if (month) {
-      u.monthlyData.push({ month:month, avg:avg, n:n });
-      u.months.push(month);
-      allMonths.push(month);
-    }
+    u.weightedSum     += avg * scoreC;
+    u.negCount += negC; u.posCount += posC; u.detCount += detC;
+    u.npsPromoters += npsPro; u.npsDetractors += npsDet; u.npsTotal += npsTot;
+    if (month) { u.monthlyData.push({month:month,avg:avg,n:n}); u.months.push(month); allMonths.push(month); }
 
-    // Parse top_issues string: "Food Quality:669|Speed of Service:534"
-    // Only parse issues ONCE per unit (from first row) - server already totals across all months
-    if (issues && !u._issuesParsed) {
+    // Enriched metadata (stable across months - use first row values)
+    if (!u.city    && r.city)    u.city    = String(r.city);
+    if (!u.state   && r.state)   u.state   = String(r.state);
+    if (!u.rvp     && r.rvp)     u.rvp     = String(r.rvp);
+    if (!u.svp     && r.svp)     u.svp     = String(r.svp);
+    if (!u.president && r.president) u.president = String(r.president);
+    if (!u.rdm     && r.rdm)     u.rdm     = String(r.rdm);
+    if (!u.unit_industry    && r.unit_industry)    u.unit_industry    = String(r.unit_industry);
+    if (!u.unit_sub_industry && r.unit_sub_industry) u.unit_sub_industry = String(r.unit_sub_industry);
+
+    // Parse issues once per unit
+    if (r.top_issues && !u._issuesParsed) {
       u._issuesParsed = true;
-      issues.split('|').forEach(function(part) {
+      String(r.top_issues).split('|').forEach(function(part) {
         var bits = part.split(':');
         if (bits.length >= 2) {
-          var rName = bits[0].trim();
-          var rCnt  = parseInt(bits[bits.length-1]) || 1;
-          if (rName) {
-            u.issueMap[rName] = (u.issueMap[rName] || 0) + rCnt;
-            reasons[rName]    = (reasons[rName]    || 0) + rCnt;
+          var rName = bits[0].trim(), rCnt = parseInt(bits[bits.length-1]) || 1;
+          if (rName) { u.issueMap[rName] = (u.issueMap[rName]||0)+rCnt; reasons[rName]=(reasons[rName]||0)+rCnt; }
+        }
+      });
+    }
+
+    // Parse daypart data once per unit
+    if (r.daypart_data && !u._daypartParsed) {
+      u._daypartParsed = true;
+      String(r.daypart_data).split('|').forEach(function(part) {
+        var bits = part.split(':');
+        if (bits.length >= 4) {
+          var dp = bits[0].trim();
+          if (dp && dp !== 'Unknown') {
+            u.daypartMap[dp] = {n:parseInt(bits[2])||0, avg:parseFloat(bits[3])||0};
+            daypartPortfolio[dp] = (daypartPortfolio[dp]||0) + (parseInt(bits[2])||0);
+          }
+        }
+      });
+    }
+
+    // Parse category data once per unit
+    if (r.category_data && !u._categoryParsed) {
+      u._categoryParsed = true;
+      String(r.category_data).split('|').forEach(function(part) {
+        var bits = part.split(':');
+        if (bits.length >= 5) {
+          var cat = bits[0].trim();
+          if (cat && cat !== 'Uncategorized') {
+            if (!u.categoryMap[cat]) u.categoryMap[cat] = {n:0, negCount:0, avg:0};
+            u.categoryMap[cat].n += parseInt(bits[2])||0;
+            u.categoryMap[cat].negCount += parseInt(bits[4])||0;
+            categoryPortfolio[cat] = (categoryPortfolio[cat]||0) + (parseInt(bits[2])||0);
           }
         }
       });
     }
   }
 
-  // Compute global mean across all units (weighted by responses)
-  var totalWeightedSum = 0, totalScores = 0;
-  Object.keys(units).forEach(function(k) {
-    totalWeightedSum += units[k].weightedSum;
-    totalScores      += units[k].totalScoreCount;
-  });
-  var gMean = totalScores ? totalWeightedSum / totalScores : 3.0;
+  // Global mean
+  var totalWS=0, totalSC=0;
+  Object.keys(units).forEach(function(k){ totalWS+=units[k].weightedSum; totalSC+=units[k].totalScoreCount; });
+  var gMean = totalSC ? totalWS/totalSC : 3.0;
 
-  // Build unitStats array
   var unitStats = [];
   Object.keys(units).forEach(function(key) {
-    var u       = units[key];
-    var n       = u.totalResponses;
-    var rawAvg  = u.totalScoreCount ? u.weightedSum / u.totalScoreCount : 0;
+    var u = units[key], n = u.totalResponses;
+    var rawAvg  = u.totalScoreCount ? u.weightedSum/u.totalScoreCount : 0;
     var wScore  = rawAvg ? bayesian(rawAvg, n, gMean) : gMean;
     var total   = u.totalScoreCount;
-    function pct(x,t) { return t ? +(x/t*100).toFixed(1) : 0; }
-    var negRate = pct(u.negCount, total);
-    var posRate = pct(u.posCount, total);
-    var nps     = Math.round(posRate - pct(u.detCount, total));
-    var topReasons = Object.keys(u.issueMap)
-      .map(function(r){ return [r, u.issueMap[r]]; })
-      .sort(function(a,b){ return b[1]-a[1]; })
-      .slice(0,10);
+    function pct(x,t){ return t ? +(x/t*100).toFixed(1) : 0; }
+    var topReasons = Object.keys(u.issueMap).map(function(r){return[r,u.issueMap[r]];}).sort(function(a,b){return b[1]-a[1];}).slice(0,10);
+    var topDayparts = Object.keys(u.daypartMap).map(function(d){return{name:d,n:u.daypartMap[d].n,avg:u.daypartMap[d].avg};}).sort(function(a,b){return b.n-a.n;});
+    var topCategories = Object.keys(u.categoryMap).map(function(cat){return{name:cat,n:u.categoryMap[cat].n,negCount:u.categoryMap[cat].negCount};}).sort(function(a,b){return b.n-a.n;});
     var conf = confTier(n);
-    var sortedMonths = u.months.slice().sort();
-    // Build scoresByDate for trend functions (one entry per month using avg as representative score)
-    var scoresByDate = u.monthlyData.map(function(md) {
-      return { date: md.month + '-15', score: md.avg, n: md.n };
-    });
+    var sm = u.months.slice().sort();
+    // NPS score: % promoters - % detractors
+    var npsScore = u.npsTotal ? Math.round((u.npsPromoters/u.npsTotal*100) - (u.npsDetractors/u.npsTotal*100)) : null;
     unitStats.push({
       key:key, name:u.name, sap:u.sap,
       rawAvg:+rawAvg.toFixed(2), wScore:+wScore.toFixed(2),
       responses:n, totalRows:n,
-      negRate:negRate, posRate:posRate, nps:nps,
+      negRate:pct(u.negCount,total), posRate:pct(u.posCount,total),
+      nps:Math.round(pct(u.posCount,total)-pct(u.detCount,total)),
+      npsScore:npsScore,
       topReasons:topReasons, conf:conf,
-      rankable:n >= MIN_RANK, reliable:n >= MIN_RELIABLE,
-      minDate: sortedMonths.length ? sortedMonths[0] : '',
-      maxDate: sortedMonths.length ? sortedMonths[sortedMonths.length-1] : '',
-      monthlyData: u.monthlyData.sort(function(a,b){ return a.month > b.month ? 1 : -1; }),
-      scoresByDate: scoresByDate
+      rankable:n>=MIN_RANK, reliable:n>=MIN_RELIABLE,
+      minDate:sm.length?sm[0]:'', maxDate:sm.length?sm[sm.length-1]:'',
+      monthlyData:u.monthlyData.slice().sort(function(a,b){return a.month>b.month?1:-1;}),
+      scoresByDate:u.monthlyData.map(function(md){return{date:md.month+'-15',score:md.avg,n:md.n};}),
+      // Enriched
+      city:u.city, state:u.state, rvp:u.rvp, svp:u.svp, president:u.president, rdm:u.rdm,
+      unit_industry:u.unit_industry, unit_sub_industry:u.unit_sub_industry,
+      topDayparts:topDayparts, topCategories:topCategories
     });
   });
 
-  unitStats.sort(function(a,b){ return b.wScore - a.wScore; });
-  var topReasons = Object.keys(reasons)
-    .map(function(r){ return [r, reasons[r]]; })
-    .sort(function(a,b){ return b[1]-a[1]; });
-  var allMonthsSorted = allMonths.slice().sort();
+  unitStats.sort(function(a,b){return b.wScore-a.wScore;});
+  var topReasons = Object.keys(reasons).map(function(r){return[r,reasons[r]];}).sort(function(a,b){return b[1]-a[1];});
+  var ams = allMonths.slice().sort();
 
   return {
-    unitStats:    unitStats,
-    gMean:        +gMean.toFixed(2),
-    topReasons:   topReasons,
-    qStats:       [],
-    totalRows:    DATA.length,
-    uniqueResponses: unitStats.reduce(function(s,u){ return s+u.responses; }, 0),
-    uniqueUnits:  unitStats.length,
-    rankable:     unitStats.filter(function(u){ return u.rankable; }).length,
-    reliable:     unitStats.filter(function(u){ return u.reliable; }).length,
-    minDate:      allMonthsSorted.length ? allMonthsSorted[0] : '',
-    maxDate:      allMonthsSorted.length ? allMonthsSorted[allMonthsSorted.length-1] : '',
-    hasDateData:  allMonthsSorted.length > 0
+    unitStats:unitStats, gMean:+gMean.toFixed(2),
+    topReasons:topReasons, qStats:[],
+    totalRows:DATA.length,
+    uniqueResponses:unitStats.reduce(function(s,u){return s+u.responses;},0),
+    uniqueUnits:unitStats.length,
+    rankable:unitStats.filter(function(u){return u.rankable;}).length,
+    reliable:unitStats.filter(function(u){return u.reliable;}).length,
+    minDate:ams.length?ams[0]:'', maxDate:ams.length?ams[ams.length-1]:'',
+    hasDateData:ams.length>0,
+    topDayports:daypartPortfolio,
+    topCategories:categoryPortfolio
   };
 }
 function refreshStats() {
   var a = runAnalytics();
-  // Show unique months of data, not raw aggregated row count
   var uniqueMonths = {};
-  for (var i = 0; i < DATA.length; i++) { if (DATA[i].month) uniqueMonths[DATA[i].month] = 1; }
+  for (var i=0; i<DATA.length; i++){if(DATA[i].month)uniqueMonths[DATA[i].month]=1;}
   document.getElementById('st-rows').textContent  = Object.keys(uniqueMonths).length + ' months';
   document.getElementById('st-resp').textContent  = a.uniqueResponses.toLocaleString();
   document.getElementById('st-units').textContent = a.uniqueUnits;
   document.getElementById('st-rank').textContent  = a.rankable + ' / ' + a.uniqueUnits;
   document.getElementById('st-avg').textContent   = a.gMean ? a.gMean + '/5' : '-';
-  document.getElementById('st-src').textContent   = customData ? 'LIVE' : 'DEMO';
+  document.getElementById('st-src').textContent   = customData ? 'CSV' : 'DEMO';
   renderUnitList('');
 }
 
@@ -560,129 +586,107 @@ function handleCSV(input) {
   input.value = '';
 }
 
-// Classify query intent - determines what visuals to show
 function classifyQuery(q) {
-  var ql = q.toLowerCase();
-  var hasUnit   = !!findUnit(q, runAnalytics().unitStats);
-  var isDeep    = hasUnit || /deep.?dive|tell me about|how is|analysis for/.test(ql);
-  var isRank    = !hasUnit && /rank|ranking|compar|best unit|worst unit|top unit|bottom unit|all unit|list unit|show unit|table of unit/.test(ql);
-  var isIssue   = !hasUnit && /complaint|reason|issue|problem|categor|feedback|what are people|common/.test(ql);
-  var isHealth  = !hasUnit && /health|portfolio|overview|executive|summary|dashboard|how many thriv|how many at.risk/.test(ql);
-  var isDate    = /date|week|month|year|trend|over time|change|spike|decline|when|recent|last|since|period|2024|2025|2026|distribution|timeline|history|quarter/.test(ql);
-  var isConversational = /why|explain|what does|what is|how does|tell me|describe|what happened|can you|should i|what should/.test(ql);
-  // Pure conversational questions don't need charts
-  if (isConversational && !isDeep && !isRank && !isHealth) return {type:'conversational', hasUnit:hasUnit, isDate:isDate};
-  if (isDeep)   return {type:'unit',    hasUnit:hasUnit, isDate:isDate};
-  if (isRank)   return {type:'ranking', hasUnit:false,   isDate:isDate};
-  if (isIssue)  return {type:'issues',  hasUnit:false,   isDate:isDate};
-  if (isHealth) return {type:'health',  hasUnit:false,   isDate:isDate};
-  return        {type:'health',  hasUnit:false,   isDate:isDate};
+  var ql=q.toLowerCase();
+  var a2=runAnalytics();
+  var hasUnit=!!findUnit(q, a2.unitStats);
+  var isDeep=hasUnit||/deep.?dive|tell me about|how is|analysis for/.test(ql);
+  var isRank=!hasUnit&&/rank|ranking|compar|best unit|worst unit|top unit|bottom unit|all unit|list unit|show unit|table of unit/.test(ql);
+  var isIssue=!hasUnit&&/complaint|reason|issue|problem|categor|feedback|what are people|common/.test(ql);
+  var isHealth=!hasUnit&&/health|portfolio|overview|executive|summary|dashboard|how many thriv|how many at.?risk/.test(ql);
+  var isDate=/date|week|month|year|trend|over time|change|spike|decline|when|recent|last|since|period|2024|2025|2026|distribution|timeline|history|quarter/.test(ql);
+  var isConv=/why|explain|what does|what is|how does|tell me|describe|what happened|can you|should i|what should/.test(ql);
+  if (isConv && !isDeep && !isRank && !isHealth) return {type:'conversational',hasUnit:hasUnit,isDate:isDate};
+  if (isDeep)   return {type:'unit',    hasUnit:hasUnit,isDate:isDate};
+  if (isRank)   return {type:'ranking', hasUnit:false,  isDate:isDate};
+  if (isIssue)  return {type:'issues',  hasUnit:false,  isDate:isDate};
+  if (isHealth) return {type:'health',  hasUnit:false,  isDate:isDate};
+  return          {type:'health',  hasUnit:false,  isDate:isDate};
 }
 
 function buildVisuals(query, a) {
-  pendingCharts = []; pendingTables = [];
-  var intent = classifyQuery(query);
+  pendingCharts=[]; pendingTables=[];
+  var intent=classifyQuery(query);
+  if (intent.type==='conversational') return;
 
-  // No visuals for conversational/follow-up questions
-  if (intent.type === 'conversational') return;
-
-  // Unit deep-dive
-  if (intent.type === 'unit') {
-    var tu = findUnit(query, a.unitStats);
-    if (!tu) return; // Don't fall back to first unit - show no charts if unit not found
-    if (tu.topReasons.length >= 2) {
-      pendingCharts.push({title:'Feedback Breakdown - ' + tu.name, type:'doughnut',
-        labels: tu.topReasons.slice(0,8).map(function(x){return x[0];}),
-        datasets:[{label:'Mentions', data:tu.topReasons.slice(0,8).map(function(x){return x[1];}),
+  if (intent.type==='unit') {
+    var tu=findUnit(query, a.unitStats);
+    if (!tu) return;
+    if (tu.topReasons.length>=2) {
+      pendingCharts.push({title:'Feedback Breakdown - '+tu.name,type:'doughnut',
+        labels:tu.topReasons.slice(0,8).map(function(x){return x[0];}),
+        datasets:[{label:'Mentions',data:tu.topReasons.slice(0,8).map(function(x){return x[1];}),
           colors:['#E76F51','#F4A261','#E9C46A','#52B788','#60A5FA','#A78BFA','#95D5B2','#1B4332']}]
       });
     }
-    pendingCharts.push({title:tu.name + ' vs Portfolio', type:'bar',
+    pendingCharts.push({title:tu.name+' vs Portfolio',type:'bar',
       labels:['Raw CSAT','Weighted Score','Portfolio Mean'],
-      datasets:[{label:'Score /5', data:[tu.rawAvg, tu.wScore, a.gMean],
-        colors:[tu.rawAvg >= a.gMean ? '#40916C':'#E76F51', tu.wScore >= a.gMean ? '#2D6A4F':'#E76F51','#E9C46A']}]
+      datasets:[{label:'Score /5',data:[tu.rawAvg,tu.wScore,a.gMean],
+        colors:[tu.rawAvg>=a.gMean?'#40916C':'#E76F51',tu.wScore>=a.gMean?'#2D6A4F':'#E76F51','#E9C46A']}]
     });
-    var tot = tu.topReasons.reduce(function(s,x){return s+x[1];},0);
-    pendingTables.push({
-      title:'Issue Breakdown - ' + tu.name + ' (n=' + tu.responses + ', ' + tu.conf.label + ' confidence)',
-      headers:['Feedback Category','Mentions','% of Feedback'], scoreCol:-1,
-      rows:tu.topReasons.map(function(x){return [x[0], x[1], tot?(x[1]/tot*100).toFixed(1)+'%':'-'];})
-    });
-    return;
-  }
-
-  // Rankings - table only, no chart for every single unit (too cluttered)
-  if (intent.type === 'ranking') {
-    var rankable = a.unitStats.filter(function(u){return u.rankable;});
-    var excl = a.unitStats.filter(function(u){return !u.rankable;}).length;
-    // Chart for top 20 only - not all 300+ units
-    var chartUnits = rankable.slice(0, 20);
-    pendingCharts.push({title:'Top 20 Units by Weighted CSAT', type:'horizontalBar',
-      labels: chartUnits.map(function(u){return u.name.length>28?u.name.slice(0,26)+'..':u.name;}),
-      datasets:[{label:'Weighted Score', data:chartUnits.map(function(u){return u.wScore;}),
-        colors:chartUnits.map(function(u){return u.wScore>=4?'#2D6A4F':u.wScore>=3?'#E9C46A':'#E76F51';})}]
-    });
-    pendingTables.push({
-      title:'Full Unit Performance Ranking' + (excl?' ('+excl+' excluded: n<'+MIN_RANK+')':''),
-      headers:['#','Unit','SAP','Responses','Raw Avg','Wtd Score','Neg%','NPS','Confidence'],
-      scoreCol:5,
-      rows:rankable.map(function(u,i){return [
-        i+1, u.name.length>30?u.name.slice(0,28)+'..':u.name,
-        u.sap||'-', u.responses, u.rawAvg, u.wScore,
-        u.negRate+'%', (u.nps>0?'+':'')+u.nps, u.conf.label
-      ];})
+    var tot=tu.topReasons.reduce(function(s,x){return s+x[1];},0);
+    pendingTables.push({title:'Issue Breakdown - '+tu.name+' (n='+tu.responses+', '+tu.conf.label+' confidence)',
+      headers:['Feedback Category','Mentions','% of Feedback'],scoreCol:-1,
+      rows:tu.topReasons.map(function(x){return[x[0],x[1],tot?(x[1]/tot*100).toFixed(1)+'%':'-'];})
     });
     return;
   }
 
-  // Issues/complaints
-  if (intent.type === 'issues') {
-    var top = a.topReasons.slice(0,15);
-    var total = top.reduce(function(s,x){return s+x[1];},0);
-    pendingCharts.push({title:'Top Feedback Categories - Portfolio Wide', type:'bar',
+  if (intent.type==='ranking') {
+    var rankable=a.unitStats.filter(function(u){return u.rankable;});
+    var excl=a.unitStats.filter(function(u){return !u.rankable;}).length;
+    var top20=rankable.slice(0,20);
+    pendingCharts.push({title:'Top 20 Units by Weighted CSAT',type:'horizontalBar',
+      labels:top20.map(function(u){return u.name.length>28?u.name.slice(0,26)+'..':u.name;}),
+      datasets:[{label:'Weighted Score',data:top20.map(function(u){return u.wScore;}),
+        colors:top20.map(function(u){return u.wScore>=4?'#2D6A4F':u.wScore>=3?'#E9C46A':'#E76F51';})}]
+    });
+    pendingTables.push({
+      title:'Full Unit Performance Ranking'+(excl?' ('+excl+' excluded: n<'+MIN_RANK+')':''),
+      headers:['#','Unit','SAP','Responses','Wtd Score','Neg%','NPS','Confidence'],scoreCol:4,
+      rows:rankable.map(function(u,i){return[i+1,u.name.length>30?u.name.slice(0,28)+'..':u.name,
+        u.sap||'-',u.responses,u.wScore,u.negRate+'%',(u.nps>0?'+':'')+u.nps,u.conf.label];})
+    });
+    return;
+  }
+
+  if (intent.type==='issues') {
+    var top=a.topReasons.slice(0,15);
+    var total=top.reduce(function(s,x){return s+x[1];},0);
+    pendingCharts.push({title:'Top Feedback Categories - Portfolio Wide',type:'bar',
       labels:top.map(function(x){return x[0].length>22?x[0].slice(0,20)+'..':x[0];}),
-      datasets:[{label:'Mentions', data:top.map(function(x){return x[1];}),
+      datasets:[{label:'Mentions',data:top.map(function(x){return x[1];}),
         colors:top.map(function(_,i){return PAL[i%PAL.length];})}]
     });
     pendingTables.push({title:'Feedback Category Analysis',
-      headers:['Category','Total Mentions','% of Total'], scoreCol:-1,
-      rows:top.map(function(x){return [x[0], x[1], total?(x[1]/total*100).toFixed(1)+'%':'-'];})
+      headers:['Category','Total Mentions','% of Total'],scoreCol:-1,
+      rows:top.map(function(x){return[x[0],x[1],total?(x[1]/total*100).toFixed(1)+'%':'-'];})
     });
     return;
   }
 
-  // Portfolio health / executive summary / default
-  var tG = 0, tN = 0, tR = 0;
-  for (var ii = 0; ii < a.unitStats.length; ii++) {
-    var ws = a.unitStats[ii].wScore;
-    if (ws >= 4) tG++; else if (ws >= 3) tN++; else tR++;
-  }
-  pendingCharts.push({title:'Portfolio Health Distribution', type:'doughnut',
+  var tG=0,tN=0,tR=0;
+  for (var ii=0; ii<a.unitStats.length; ii++){var ws=a.unitStats[ii].wScore; if(ws>=4)tG++;else if(ws>=3)tN++;else tR++;}
+  pendingCharts.push({title:'Portfolio Health Distribution',type:'doughnut',
     labels:['Thriving (4.0+)','Neutral (3.0-3.9)','At-Risk (<3.0)'],
-    datasets:[{label:'Units', data:[tG,tN,tR], colors:['#40916C','#E9C46A','#E76F51']}]
+    datasets:[{label:'Units',data:[tG,tN,tR],colors:['#40916C','#E9C46A','#E76F51']}]
   });
-  var top8R = a.topReasons.slice(0,8);
-  pendingCharts.push({title:'Top 8 Portfolio-Wide Issues', type:'bar',
+  var top8R=a.topReasons.slice(0,8);
+  pendingCharts.push({title:'Top 8 Portfolio-Wide Issues',type:'bar',
     labels:top8R.map(function(x){return x[0].length>20?x[0].slice(0,18)+'..':x[0];}),
-    datasets:[{label:'Mentions', data:top8R.map(function(x){return x[1];}),
+    datasets:[{label:'Mentions',data:top8R.map(function(x){return x[1];}),
       colors:['#E76F51','#F4A261','#E9C46A','#52B788','#60A5FA','#A78BFA','#95D5B2','#2D6A4F']}]
   });
-  var rbl = a.unitStats.filter(function(u){return u.rankable;}).slice(0,25);
-  var exN = a.unitStats.filter(function(u){return !u.rankable;}).length;
+  var rbl=a.unitStats.filter(function(u){return u.rankable;}).slice(0,25);
+  var exN=a.unitStats.filter(function(u){return !u.rankable;}).length;
   pendingTables.push({
-    title:'Unit Summary' + (exN?' ('+exN+' excluded: n<'+MIN_RANK+')':''),
-    headers:['Unit','SAP','Responses','Wtd Score','Neg%','NPS','Health','Confidence'],
-    scoreCol:3,
-    rows:rbl.map(function(u){return [
-      u.name.length>30?u.name.slice(0,28)+'..':u.name,
-      u.sap||'-', u.responses, u.wScore,
-      u.negRate+'%', (u.nps>0?'+':'')+u.nps,
-      u.wScore>=4?'Thriving':u.wScore>=3?'Neutral':'At-Risk',
-      u.conf.label
-    ];})
+    title:'Unit Summary'+(exN?' ('+exN+' excluded: n<'+MIN_RANK+')':''),
+    headers:['Unit','SAP','Responses','Wtd Score','Neg%','NPS','Health','Confidence'],scoreCol:3,
+    rows:rbl.map(function(u){return[u.name.length>30?u.name.slice(0,28)+'..':u.name,
+      u.sap||'-',u.responses,u.wScore,u.negRate+'%',(u.nps>0?'+':'')+u.nps,
+      u.wScore>=4?'Thriving':u.wScore>=3?'Neutral':'At-Risk',u.conf.label];})
   });
 }
-
 function renderVisuals() {
   var html = '';
   for (var i = 0; i < pendingCharts.length; i++) {
@@ -858,16 +862,13 @@ function parseDateRange(query) {
 }
 
 function computeDateStats(unit, startDate, endDate) {
-  // Use pre-computed monthlyData filtered to date range
   if (!unit.monthlyData || !unit.monthlyData.length) return null;
-  // startDate/endDate might be YYYY-MM-DD, convert to YYYY-MM for monthly comparison
   var startM = startDate ? startDate.slice(0,7) : null;
   var endM   = endDate   ? endDate.slice(0,7)   : null;
   var filtered = unit.monthlyData.filter(function(md) {
     return (!startM || md.month >= startM) && (!endM || md.month <= endM);
   });
   if (!filtered.length) return null;
-  // Weighted average across months
   var totalN = 0, weightedSum = 0;
   filtered.forEach(function(md) { totalN += md.n; weightedSum += md.avg * md.n; });
   var avg = totalN ? weightedSum / totalN : 0;
@@ -875,7 +876,6 @@ function computeDateStats(unit, startDate, endDate) {
 }
 
 function computeMonthlyTrend(unit) {
-  // Use pre-computed monthlyData if available
   if (unit.monthlyData && unit.monthlyData.length) {
     return unit.monthlyData.slice().sort(function(a,b){ return a.month > b.month ? 1 : -1; });
   }
@@ -885,11 +885,9 @@ function computeMonthlyTrend(unit) {
 function buildSystem(userQuery) {
   var a = runAnalytics();
   buildVisuals(userQuery, a);
-
   var tu        = findUnit(userQuery, a.unitStats);
   var dateRange = parseDateRange(userQuery);
   var intent    = classifyQuery(userQuery);
-
   var top20    = a.unitStats.slice(0, 20);
   var bottom10 = a.unitStats.slice(-10);
   var seen = {}, featured = [];
@@ -897,24 +895,23 @@ function buildSystem(userQuery) {
   if (tu) addU(tu);
   top20.forEach(addU);
   bottom10.forEach(addU);
-
   var totalUnits = a.uniqueUnits;
   var bottom10Keys = {};
   bottom10.forEach(function(u){ bottom10Keys[u.key]=1; });
-
   var unitLines = featured.map(function(u) {
     var tag  = bottom10Keys[u.key] && u.wScore < 3 ? '[AT-RISK]' : '';
     var base = tag + u.name.slice(0,28) + '|SAP:' + (u.sap||'?')
       + '|n:' + u.responses + '|wtd:' + u.wScore + '|neg:' + u.negRate + '%|' + u.conf.label
-      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,15)+'('+x[1]+')';}).join(',');
+      + '|issues:' + u.topReasons.slice(0,3).map(function(x){return x[0].slice(0,15)+'('+x[1]+')';}).join(',')
+      + (u.city ? '|loc:'+u.city+(u.state?','+u.state:'') : '')
+      + (u.rvp  ? '|rvp:'+u.rvp.slice(0,20) : '');
     if (u.minDate) base += '|data:' + u.minDate + ' to ' + u.maxDate;
     if (dateRange) {
       var ps = computeDateStats(u, dateRange.start, dateRange.end);
-      if (ps) base += '|period_n:' + ps.n + '|period_avg:' + ps.avg + '|period_neg:' + ps.negRate + '%';
+      if (ps) base += '|period_n:' + ps.n + '|period_avg:' + ps.avg;
     }
     return base;
   }).join('\n');
-
   var unitFocus = '';
   if (tu) {
     unitFocus = '\nFOCUS UNIT: ' + tu.name + ' (SAP ' + (tu.sap||'?') + ')'
@@ -922,7 +919,6 @@ function buildSystem(userQuery) {
       + ' | ' + tu.conf.label + ' confidence | neg:' + tu.negRate + '%'
       + '\nTop issues: ' + tu.topReasons.slice(0,5).map(function(x){return x[0]+'('+x[1]+')';}).join(', ');
     if (tu.minDate) unitFocus += '\nData range: ' + tu.minDate + ' to ' + tu.maxDate;
-    // Always include full monthly trend — critical for date analysis
     var trend = computeMonthlyTrend(tu);
     if (trend.length >= 1) {
       unitFocus += '\nMonthly CSAT (month:avg:n_responses): '
@@ -931,11 +927,24 @@ function buildSystem(userQuery) {
     if (dateRange) {
       var ps2 = computeDateStats(tu, dateRange.start, dateRange.end);
       if (ps2) unitFocus += '\nFiltered to ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + '): n=' + ps2.n + ' avg=' + ps2.avg;
-      else     unitFocus += '\nNo data found for period: ' + dateRange.label + ' (' + dateRange.start + ' to ' + dateRange.end + ')';
+      else     unitFocus += '\nNo data found for period: ' + dateRange.label;
+    }
+    // Include enriched context
+    if (tu.city || tu.state)       unitFocus += '\nLocation: ' + [tu.city, tu.state].filter(Boolean).join(', ');
+    if (tu.unit_industry)          unitFocus += '\nIndustry: ' + tu.unit_industry + (tu.unit_sub_industry ? ' / ' + tu.unit_sub_industry : '');
+    if (tu.rvp)                    unitFocus += '\nRVP: ' + tu.rvp;
+    if (tu.svp)                    unitFocus += '\nSVP: ' + tu.svp;
+    if (tu.npsScore !== null)      unitFocus += '\nTrue NPS score: ' + tu.npsScore;
+    if (tu.topDayparts && tu.topDayparts.length) {
+      unitFocus += '\nDaypart breakdown (daypart:n:avg_csat): ' +
+        tu.topDayparts.slice(0,5).map(function(d){return d.name+'(n='+d.n+',avg='+d.avg.toFixed(2)+')';}).join(' | ');
+    }
+    if (tu.topCategories && tu.topCategories.length) {
+      unitFocus += '\nCategory breakdown (category:n:neg): ' +
+        tu.topCategories.slice(0,5).map(function(cat){return cat.name+'(n='+cat.n+',neg='+cat.negCount+')';}).join(' | ');
     }
     unitFocus += '\n';
   }
-
   var dateContext = '';
   var todayStr = new Date().toISOString().slice(0,10);
   if (dateRange) {
@@ -943,9 +952,8 @@ function buildSystem(userQuery) {
       + '\nToday: ' + todayStr
       + '\nData available: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + '\n';
   } else if (a.hasDateData) {
-    dateContext = '\nData date range: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + ' | Today: ' + todayStr + '\n';
+    dateContext = '\nData range: ' + (a.minDate||'unknown') + ' to ' + (a.maxDate||'unknown') + ' | Today: ' + todayStr + '\n';
   }
-
   var portfolioTrend = '';
   if (intent.isDate && !tu) {
     var byMonth2 = {};
@@ -966,13 +974,11 @@ function buildSystem(userQuery) {
         }).join(', ') + '\n';
     }
   }
-
   var rendered  = pendingCharts.map(function(ch,i){return 'Chart '+(i+1)+': '+ch.title;})
     .concat(pendingTables.map(function(t,i){return 'Table '+(i+1)+': '+t.title;})).join(', ') || 'none';
   var topIssues = a.topReasons.slice(0,8).map(function(x){return x[0].slice(0,20)+':'+x[1];}).join(', ');
   var atRisk    = a.unitStats.filter(function(u){return u.wScore < 3 && u.rankable;}).length;
   var thriving  = a.unitStats.filter(function(u){return u.wScore >= 4 && u.rankable;}).length;
-
   return 'You are a senior FLIK Hospitality analytics expert at Compass Group. '
     + 'You analyse VOC survey data using Bayesian-weighted CSAT scoring. '
     + 'Formula: (n x raw + 30 x global_mean) / (n + 30). '
@@ -981,18 +987,14 @@ function buildSystem(userQuery) {
     + 'PORTFOLIO: ' + totalUnits + ' units | ' + a.uniqueResponses.toLocaleString() + ' responses'
     + ' | weighted CSAT ' + a.gMean + '/5 | rankable:' + a.rankable
     + ' | thriving:' + thriving + ' | at-risk:' + atRisk + '\n'
-    + dateContext
-    + unitFocus
-    + portfolioTrend
+    + dateContext + unitFocus + portfolioTrend
     + '\nUNIT DATA (top 20 + bottom 10 of ' + totalUnits + ' total):\n' + unitLines + '\n\n'
     + 'Top portfolio issues: ' + topIssues + '\n'
     + 'Visuals shown: ' + rendered + '\n\n'
     + 'RULES: plain markdown only, no HTML, no code fences. '
     + 'Never reproduce data already in charts/tables. '
-    + 'For date/trend questions: use the Monthly CSAT breakdown data above -- it contains the actual month-by-month scores. Compute changes between months, identify the best and worst months, flag any spikes or declines. Always cite specific months and scores. Never say data is unavailable if Monthly CSAT breakdown is present above. '
-    + 'Cite n= and confidence for every unit claim. '
-    + 'Use display names not SAP numbers. '
-    + 'Never speculate on units with n<5. '
+    + 'For date/trend questions: use the Monthly CSAT breakdown above. Compute month-over-month changes, identify best/worst months, flag spikes/declines. Never say data unavailable if Monthly CSAT is present. '
+    + 'Cite n= for every unit claim. Use display names not SAP numbers. Never speculate on n<5. '
     + 'End with ### Key Takeaway (3-5 sentences).';
 }
 
@@ -1008,13 +1010,11 @@ function sanitizeReply(raw) {
   }
   s = cleaned.join('\n');
   s = s.replace(/<style[\s\S]*?<\/style>/gi,'')
-       .replace(/<script[\s\S]*?<\/script>/gi,'')
+       .replace(/<scr'+'ipt[\s\S]*?<\/scr'+'ipt>/gi,'')
        .replace(/<!DOCTYPE[^>]*>/gi,'')
        .replace(/<html[^>]*>|<\/html>/gi,'')
        .replace(/<head[\s\S]*?<\/head>/gi,'')
-       .replace(/<body[^>]*>|<\/body>/gi,'')
-       .replace(/<[^>]+>/g,' ')
-       .replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&').replace(/&nbsp;/g,' ');
+       .replace(/<body[^>]*>|<\/body>/gi,'');
   s = s.replace(/[ \t]{3,}/g,' ').replace(/\n{4,}/g,'\n\n').trim();
   return s;
 }
@@ -1026,84 +1026,35 @@ function isBadReply(s, stopReason) {
   if (s.indexOf('<!DOCTYPE') !== -1) return 'html';
   if (stopReason === 'max_tokens') return 'truncated';
   var tail = s.slice(-80).trim();
-  if (/[,:([\-]\s*$/.test(tail) && s.length > 300) return 'cutoff';
+  if (/[,:(\[\-]\s*$/.test(tail) && s.length > 300) return 'cutoff';
   return null;
 }
 
-// Server-side prompt cache hash -- avoids resending large system prompt every turn
-
-// -- RAG -- Push analytics to Snowflake UNIT_ANALYTICS table -------------------
 function refreshAnalyticsForRAG() {
   if (!customData || !DATA || DATA.length === 0) return;
   var a = runAnalytics();
   if (!a || !a.unitStats || a.unitStats.length === 0) return;
-
   fetch('/api/refresh-analytics', {
-    method:  'POST',
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      unitStats:      a.unitStats,
-      portfolioStats: {
-        totalRows:         a.totalRows,
-        uniqueResponses:   a.uniqueResponses,
-        uniqueUnits:       a.uniqueUnits,
-        gMean:             a.gMean,
-        rankable:          a.rankable
-      }
-    })
-  }).then(function(r) {
-    return r.json().then(function(d) {
-      if (d.ok) {
-        console.log('[RAG] Analytics indexed for ' + d.units + ' units');
-      }
-    });
-  }).catch(function(e) {
-    console.warn('[RAG] Analytics refresh failed (non-critical):', e.message);
-  });
+    body: JSON.stringify({ unitStats: a.unitStats, portfolioStats: { totalRows: a.totalRows, uniqueResponses: a.uniqueResponses, uniqueUnits: a.uniqueUnits, gMean: a.gMean, rankable: a.rankable } })
+  }).then(function(r) { return r.json().then(function(d) { if (d.ok) console.log('[RAG] Indexed ' + d.units + ' units'); }); })
+  .catch(function(e) { console.warn('[RAG] Failed:', e.message); });
 }
 
 var _promptHash = null;
 
 function callAPI(messages, systemPrompt, onSuccess, onError, userQuery) {
-  var body = { messages: messages, useRag: true };
+  var body = { messages: messages, useRag: true, system: systemPrompt };
   if (userQuery) body.userQuery = userQuery;
-  // Use cached hash if available, otherwise send full system prompt
-  if (_promptHash) {
-    body.promptHash = _promptHash;
-  } else {
-    body.system = systemPrompt;
-  }
-
   fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
   }).then(function(res) {
     if (res.status === 401) { window.location.href = '/login'; return; }
-    if (!res.ok) {
-      return res.json().then(function(d) {
-        // Cache miss -- resend full prompt
-        if (d.error === 'prompt_cache_miss') {
-          _promptHash = null;
-          body = { system: systemPrompt, messages: messages };
-          return fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(body)
-          }).then(function(r2) {
-            return r2.json().then(function(d2) {
-              if (d2._promptHash) _promptHash = d2._promptHash;
-              onSuccess(d2.content && d2.content[0] ? d2.content[0].text : '', d2.stop_reason || 'end_turn');
-            });
-          });
-        }
-        onError('Server error ' + res.status + ': ' + (d.error || ''));
-      }).catch(function() {
-        res.text().then(function(t){ onError('Server error ' + res.status + ': ' + t.slice(0,200)); });
-      });
-    }
     return res.json().then(function(data) {
-      if (data._promptHash) _promptHash = data._promptHash;
+      if (!res.ok) { onError('Server error ' + res.status + ': ' + (data.error || '')); return; }
       onSuccess(data.content && data.content[0] ? data.content[0].text : '', data.stop_reason || 'end_turn');
     });
   }).catch(function(e){ onError(e.message); });
@@ -1113,55 +1064,32 @@ function sendMsg() {
   var inp = document.getElementById('user-input');
   var text = inp.value.trim();
   if (!text) return;
-  // Auth handled server-side
   inp.value = ''; inp.style.height = '';
   addUserMsg(text);
   chatHistory.push({role:'user', content:text});
   showTyping();
   var sysPrompt = buildSystem(text);
   var vizHtml   = renderVisuals();
-  var maxRetries = 2;
-  var attempt    = 0;
-  var messages   = chatHistory.slice(-12);
-
+  var messages  = chatHistory.slice(-12);
+  var attempt   = 0;
   function tryOnce() {
     attempt++;
     callAPI(messages, sysPrompt, function(reply, stopReason) {
       var cleaned = sanitizeReply(reply);
       var bad = isBadReply(cleaned, stopReason);
-      if (!bad) {
-        removeTyping();
-        chatHistory.push({role:'assistant', content:cleaned});
-        addBotMsg(cleaned, vizHtml, false);
-        return;
-      }
-      if (attempt >= maxRetries) {
-        removeTyping();
-        var fallback = cleaned.length > 40 ? cleaned : 'Unable to generate a complete response. Please try rephrasing.';
-        chatHistory.push({role:'assistant', content:fallback});
-        addBotMsg(fallback, vizHtml, true);
-        return;
-      }
-      var correction;
-      if (bad === 'truncated' || bad === 'cutoff') {
-        correction = 'Your response was cut off. Please continue from where you stopped and finish with a Key Takeaway section. Plain markdown only, no HTML, no code fences.';
-        messages = messages.concat([{role:'assistant',content:reply},{role:'user',content:correction}]);
-      } else {
-        correction = 'Your response contained HTML or code blocks. Rewrite as plain markdown only: ### headers, **bold**, - bullets. No HTML tags.';
-        messages = [{role:'user', content:chatHistory[chatHistory.length-1].content}];
-      }
+      if (!bad) { removeTyping(); chatHistory.push({role:'assistant', content:cleaned}); addBotMsg(cleaned, vizHtml, false); return; }
+      if (attempt >= 2) { removeTyping(); var fb = cleaned.length > 40 ? cleaned : 'Unable to generate response. Try rephrasing.'; chatHistory.push({role:'assistant', content:fb}); addBotMsg(fb, vizHtml, true); return; }
+      var cor = (bad === 'truncated' || bad === 'cutoff')
+        ? 'Response cut off. Continue and finish with ### Key Takeaway. Plain markdown only.'
+        : 'Rewrite as plain markdown only. No HTML, no code fences.';
+      messages = messages.concat([{role:'assistant',content:reply},{role:'user',content:cor}]);
       tryOnce();
-    }, function(err) {
-      removeTyping();
-      addBotMsg('Error: ' + err, '', false);
-      chatHistory.pop();
-    });
+    }, function(err) { removeTyping(); addBotMsg('Error: ' + err, '', false); chatHistory.pop(); }, text);
   }
   tryOnce();
 }
 
 function escH(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
-
 function nowTime() { return new Date().toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}); }
 
 function mdToHtml(t) {
@@ -1189,7 +1117,11 @@ function addBotMsg(txt, extraHtml, isRetried) {
   var bubble = '<div class="bubble">' + warn + mdToHtml(txt) + '</div>' + (extraHtml || '');
   d.innerHTML = '<div class="av bot">F</div><div>' + bubble + '<div class="mtime">' + nowTime() + '</div></div>';
   m.appendChild(d);
-  setTimeout(function(){ mountCharts(); d.scrollIntoView({behavior:'smooth', block:'start'}); }, 80);
+  // Scroll new message to top of viewport so user reads from the beginning
+  setTimeout(function(){
+    mountCharts();
+    d.scrollIntoView({behavior:'smooth', block:'start'});
+  }, 80);
 }
 
 function addUserMsg(txt) {
@@ -1211,30 +1143,22 @@ function showTyping() {
 }
 
 function removeTyping() { var t = document.getElementById('typ'); if (t) t.remove(); }
-
 function showModal(){} function hideModal(){} function toggleEye(){} function saveKey(){}
-
 function ask(q) { document.getElementById('user-input').value = q; sendMsg(); }
 function handleKey(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(); } }
 function autoResize(el) { el.style.height=''; el.style.height=Math.min(el.scrollHeight,110)+'px'; }
 
 function clearChat() {
-  chatHistory = [];
-  _promptHash = null;
+  chatHistory = []; _promptHash = null;
   var m = document.getElementById('messages');
   m.innerHTML = '<div class="welcome" id="welcome">'
     + '<div class="wicon"><svg viewBox="0 0 24 24"><path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-5 14H7v-2h7v2zm3-4H7v-2h10v2zm0-4H7V7h10v2z"/></svg></div>'
     + '<h2>FLIK Survey Intelligence</h2><p>Chat cleared. Ask a new question.</p>'
     + '<div class="wchips">'
     + '<button class="wchip" onclick="ask(\'Full executive summary with portfolio health, unit ranking, and top issues\')">Full dashboard</button>'
-    + '<button class="wchip" onclick="ask(\'Show CSAT scores by unit as a bar chart\')">CSAT chart</button>'
     + '<button class="wchip" onclick="ask(\'Which unit is most at risk?\')">Most at-risk</button>'
     + '</div></div>';
 }
-
-
-
-
 
 fetch('/api/me').then(function(r){
   if (r.status === 401) { window.location.href = '/login'; return null; }
@@ -1245,7 +1169,6 @@ fetch('/api/me').then(function(r){
   if (el) el.textContent = u.name || u.username || 'User';
 }).catch(function(){});
 
-// Auto-load live data from Snowflake on startup
 var nb = document.getElementById('notice-bar');
 if (nb) { nb.style.display = 'flex'; nb.textContent = 'Loading live survey data from Snowflake...'; }
 
@@ -1255,15 +1178,16 @@ fetch('/api/survey-data').then(function(r){
   return r.json();
 }).then(function(rows){
   if (!rows) return;
-  // DATA is pre-aggregated monthly rows from server
   DATA = rows;
   customData = true;
   var a2 = runAnalytics();
   refreshStats();
   var nb2 = document.getElementById('notice-bar');
   if (nb2) nb2.style.display = 'none';
-  addBotMsg('Live data loaded: ' + a2.uniqueUnits + ' units | ' + a2.uniqueResponses.toLocaleString() + ' responses | Portfolio CSAT ' + a2.gMean + '/5. What would you like to analyse?');
   refreshAnalyticsForRAG();
+  var thriving2 = a2.unitStats.filter(function(u){return u.wScore>=4&&u.rankable;}).length;
+  var atRisk2   = a2.unitStats.filter(function(u){return u.wScore<3&&u.rankable;}).length;
+  addBotMsg('Live data loaded: ' + a2.uniqueUnits + ' units | ' + a2.uniqueResponses.toLocaleString() + ' responses | Portfolio CSAT ' + a2.gMean + '/5 | Thriving: ' + thriving2 + ' | At-risk: ' + atRisk2 + '. What would you like to analyse?');
 }).catch(function(e){
   var nb3 = document.getElementById('notice-bar');
   if (nb3) { nb3.style.display = 'flex'; nb3.textContent = 'Could not load Snowflake data: ' + e.message; }
@@ -1273,5 +1197,6 @@ fetch('/api/survey-data').then(function(r){
 refreshStats();
 
 </script>
+</body>
 </body>
 </html>

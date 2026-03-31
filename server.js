@@ -56,14 +56,13 @@ async function sendEmail(to, subject, html) {
     return;
   }
 
-
   if (brevoKey) {
     // Brevo — no domain verification needed, sends to any address
     const r = await fetch('https://api.brevo.com/v3/smtp/email', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json', 'api-key': brevoKey },
       body: JSON.stringify({
-        sender:      { name: 'FLIK Survey Intelligence', email: 'hard.parikh@compass-usa.com' },
+        sender:      { name: 'FLIK Survey Intelligence', email: 'noreply@compass-usa.com' },
         to:          [{ email: to }],
         subject:     subject,
         htmlContent: html
@@ -593,10 +592,10 @@ function dbCreateUser(email, fullname, hash) {
   });
 }
 
-// ── Survey data — two queries run in parallel ────────────────────────────────
+// ── Survey data — four parallel queries for rich analytics ───────────────────
 app.get('/api/survey-data', requireAuth, function (req, res) {
 
-  // Query 1: Unit-month aggregates
+  // Query 1: Unit-month aggregates with NPS and daypart
   const sql1 = `
     SELECT
       COALESCE(NULLIF(UNIT_SAP_NUMBER::VARCHAR, '0'), UNIT) AS UNIT_KEY,
@@ -608,7 +607,22 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
       SUM(CASE WHEN CSAT < 3  THEN 1 ELSE 0 END)           AS NEG_COUNT,
       SUM(CASE WHEN CSAT >= 4 THEN 1 ELSE 0 END)           AS POS_COUNT,
       SUM(CASE WHEN CSAT <= 2 THEN 1 ELSE 0 END)           AS DET_COUNT,
-      COUNT(CSAT)                                           AS SCORE_COUNT
+      COUNT(CSAT)                                           AS SCORE_COUNT,
+      -- NPS: count promoters (9-10 on NPS scale) and detractors (0-6)
+      SUM(CASE WHEN TRY_CAST(NPS AS FLOAT) >= 9 THEN 1 ELSE 0 END) AS NPS_PROMOTERS,
+      SUM(CASE WHEN TRY_CAST(NPS AS FLOAT) <= 6 THEN 1 ELSE 0 END) AS NPS_DETRACTORS,
+      COUNT(CASE WHEN NPS IS NOT NULL AND TRIM(NPS) != '' THEN 1 END) AS NPS_TOTAL,
+      -- Geography
+      MAX(CITY)                                             AS CITY,
+      MAX(STATE)                                            AS STATE,
+      -- Management hierarchy
+      MAX(RVP)                                              AS RVP,
+      MAX(SVP)                                              AS SVP,
+      MAX(PRESIDENT)                                        AS PRESIDENT,
+      MAX(RDM)                                              AS RDM,
+      -- Industry
+      MAX(UNIT_INDUSTRY)                                    AS UNIT_INDUSTRY,
+      MAX(UNIT_SUB_INDUSTRY)                               AS UNIT_SUB_INDUSTRY
     FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
     WHERE CSAT IS NOT NULL
       AND CSAT_REASON IS NOT NULL
@@ -617,7 +631,7 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
     ORDER BY 1, 4
   `;
 
-  // Query 2: Top issues per unit — total count across all time
+  // Query 2: Top CSAT reasons per unit
   const sql2 = `
     SELECT
       COALESCE(NULLIF(UNIT_SAP_NUMBER::VARCHAR, '0'), UNIT) AS UNIT_KEY,
@@ -631,25 +645,57 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
     ORDER BY 1, 3 DESC
   `;
 
-  // Run both queries in parallel — cuts total time in half
-  var done1 = false, done2 = false;
-  var rows1 = null, rows2 = null;
-  var err1  = null, err2  = null;
-  var sent  = false;
+  // Query 3: Daypart and dining type breakdown per unit
+  const sql3 = `
+    SELECT
+      COALESCE(NULLIF(UNIT_SAP_NUMBER::VARCHAR, '0'), UNIT) AS UNIT_KEY,
+      COALESCE(NULLIF(TRIM(DAYPART), ''), 'Unknown')        AS DAYPART,
+      COALESCE(NULLIF(TRIM(DINING_TYPE), ''), 'Unknown')    AS DINING_TYPE,
+      COUNT(DISTINCT RESPONSE_ID)                           AS RESPONSES,
+      AVG(CSAT)                                             AS AVG_CSAT
+    FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
+    WHERE CSAT IS NOT NULL
+      AND AUDIT_DATE IS NOT NULL
+    GROUP BY 1, 2, 3
+    ORDER BY 1, 4 DESC
+  `;
+
+  // Query 4: Category and sub-category breakdown per unit
+  const sql4 = `
+    SELECT
+      COALESCE(NULLIF(UNIT_SAP_NUMBER::VARCHAR, '0'), UNIT) AS UNIT_KEY,
+      COALESCE(NULLIF(TRIM(CATEGORY), ''), 'Uncategorized') AS CATEGORY,
+      COALESCE(NULLIF(TRIM(SUB_CATEGORY), ''), '')          AS SUB_CATEGORY,
+      COUNT(DISTINCT RESPONSE_ID)                           AS RESPONSES,
+      AVG(CSAT)                                             AS AVG_CSAT,
+      SUM(CASE WHEN CSAT < 3 THEN 1 ELSE 0 END)            AS NEG_COUNT
+    FROM FLIK_ANALYTICS.CURIOSITY_WIDGETS.RESPONSES
+    WHERE CSAT IS NOT NULL
+      AND AUDIT_DATE IS NOT NULL
+      AND CATEGORY IS NOT NULL
+      AND TRIM(CATEGORY) != ''
+    GROUP BY 1, 2, 3
+    ORDER BY 1, 4 DESC
+  `;
+
+  var results = { r1: null, r2: null, r3: null, r4: null };
+  var errors  = { e1: null, e2: null, e3: null, e4: null };
+  var sent = false;
 
   function finish() {
-    if (!done1 || !done2 || sent) return;
+    if (Object.values(results).some(function(v){ return v === null; })) return;
+    if (sent) return;
     sent = true;
 
-    if (err1) {
-      console.error('[Survey Data] Query 1 failed:', err1.message);
-      return res.status(500).json({ error: err1.message });
+    if (errors.e1) {
+      console.error('[Survey Data] Query 1 failed:', errors.e1.message);
+      return res.status(500).json({ error: errors.e1.message });
     }
 
-    // Build issues map: unit_key -> ["reason:cnt", ...]
+    // Build issues map: unit_key -> "reason:cnt|..." (top 8)
     var issueMap = {};
-    if (rows2) {
-      rows2.forEach(function (r) {
+    if (results.r2) {
+      results.r2.forEach(function (r) {
         var k      = String(r.UNIT_KEY    || '');
         var reason = String(r.CSAT_REASON || '').trim();
         var cnt    = parseInt(r.CNT)      || 0;
@@ -659,31 +705,82 @@ app.get('/api/survey-data', requireAuth, function (req, res) {
       });
     }
 
-    const out = (rows1 || []).map(function (r) {
+    // Build daypart map: unit_key -> "daypart:dining_type:n:avg|..."
+    var daypartMap = {};
+    if (results.r3) {
+      results.r3.forEach(function (r) {
+        var k = String(r.UNIT_KEY || '');
+        if (!k) return;
+        if (!daypartMap[k]) daypartMap[k] = [];
+        if (daypartMap[k].length < 6) {
+          daypartMap[k].push(
+            String(r.DAYPART || '').replace(/[|:]/g, '-') + ':' +
+            String(r.DINING_TYPE || '').replace(/[|:]/g, '-') + ':' +
+            (parseInt(r.RESPONSES) || 0) + ':' +
+            (parseFloat(r.AVG_CSAT) || 0).toFixed(2)
+          );
+        }
+      });
+    }
+
+    // Build category map: unit_key -> "cat:subcat:n:avg|..."
+    var categoryMap = {};
+    if (results.r4) {
+      results.r4.forEach(function (r) {
+        var k = String(r.UNIT_KEY || '');
+        if (!k) return;
+        if (!categoryMap[k]) categoryMap[k] = [];
+        if (categoryMap[k].length < 8) {
+          categoryMap[k].push(
+            String(r.CATEGORY || '').replace(/[|:]/g, '-') + ':' +
+            String(r.SUB_CATEGORY || '').replace(/[|:]/g, '-') + ':' +
+            (parseInt(r.RESPONSES) || 0) + ':' +
+            (parseFloat(r.AVG_CSAT) || 0).toFixed(2) + ':' +
+            (parseInt(r.NEG_COUNT) || 0)
+          );
+        }
+      });
+    }
+
+    const out = (results.r1 || []).map(function (r) {
       var key = String(r.UNIT_KEY || '');
       return {
-        unit_key:    key,
-        unit_name:   String(r.UNIT_NAME  || ''),
-        unit_sap:    String(r.UNIT_SAP   || ''),
-        month:       String(r.MONTH      || ''),
-        responses:   parseInt(r.RESPONSES)   || 0,
-        avg_csat:    parseFloat(r.AVG_CSAT)  || 0,
-        neg_count:   parseInt(r.NEG_COUNT)   || 0,
-        pos_count:   parseInt(r.POS_COUNT)   || 0,
-        det_count:   parseInt(r.DET_COUNT)   || 0,
-        score_count: parseInt(r.SCORE_COUNT) || 0,
-        top_issues:  (issueMap[key] || []).join('|')
+        unit_key:       key,
+        unit_name:      String(r.UNIT_NAME       || ''),
+        unit_sap:       String(r.UNIT_SAP        || ''),
+        month:          String(r.MONTH           || ''),
+        responses:      parseInt(r.RESPONSES)    || 0,
+        avg_csat:       parseFloat(r.AVG_CSAT)   || 0,
+        neg_count:      parseInt(r.NEG_COUNT)    || 0,
+        pos_count:      parseInt(r.POS_COUNT)    || 0,
+        det_count:      parseInt(r.DET_COUNT)    || 0,
+        score_count:    parseInt(r.SCORE_COUNT)  || 0,
+        nps_promoters:  parseInt(r.NPS_PROMOTERS)  || 0,
+        nps_detractors: parseInt(r.NPS_DETRACTORS) || 0,
+        nps_total:      parseInt(r.NPS_TOTAL)    || 0,
+        city:           String(r.CITY            || ''),
+        state:          String(r.STATE           || ''),
+        rvp:            String(r.RVP             || ''),
+        svp:            String(r.SVP             || ''),
+        president:      String(r.PRESIDENT       || ''),
+        rdm:            String(r.RDM             || ''),
+        unit_industry:  String(r.UNIT_INDUSTRY   || ''),
+        unit_sub_industry: String(r.UNIT_SUB_INDUSTRY || ''),
+        top_issues:     (issueMap[key]    || []).join('|'),
+        daypart_data:   (daypartMap[key]  || []).join('|'),
+        category_data:  (categoryMap[key] || []).join('|')
       };
     });
 
     console.log('[Survey Data] ' + out.length + ' rows | ' +
-      Object.keys(issueMap).length + ' units with issues -> ' +
-      req.session.user.email);
+      Object.keys(issueMap).length + ' units -> ' + req.session.user.email);
     res.json(out);
   }
 
-  sfQuery(sql1, function (e, r) { err1 = e; rows1 = r; done1 = true; finish(); }, 28000);
-  sfQuery(sql2, function (e, r) { err2 = e; rows2 = e ? [] : r; done2 = true; finish(); }, 28000);
+  sfQuery(sql1, function (e, r) { errors.e1 = e; results.r1 = r || []; finish(); }, 28000);
+  sfQuery(sql2, function (e, r) { errors.e2 = e; results.r2 = e ? [] : r; finish(); }, 28000);
+  sfQuery(sql3, function (e, r) { errors.e3 = e; results.r3 = e ? [] : r; finish(); }, 28000);
+  sfQuery(sql4, function (e, r) { errors.e4 = e; results.r4 = e ? [] : r; finish(); }, 28000);
 });
 
 // ── RAG — Search relevant units via Cortex Search REST API ───────────────────
